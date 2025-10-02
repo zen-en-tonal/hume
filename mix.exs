@@ -1,4 +1,4 @@
-defmodule ElixirTemplate.MixProject do
+defmodule Hume.MixProject do
   use Mix.Project
 
   def project do
