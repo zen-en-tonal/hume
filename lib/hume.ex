@@ -99,4 +99,31 @@ defmodule Hume do
   def send_event(machine, event) do
     GenServer.call(machine, {:event, event})
   end
+
+  @doc """
+  Retrieves the current snapshot of the state machine.
+
+  ## Parameters
+    - machine: The PID or name of the state machine process.
+  ## Returns
+    - `snapshot`: The current snapshot of the state machine.
+  """
+  @spec snapshot(machine()) :: Hume.Machine.snapshot()
+  def snapshot(machine) do
+    GenServer.call(machine, :snapshot)
+  end
+
+  @doc """
+  Retrieves the current state of the state machine.
+
+  ## Parameters
+    - machine: The PID or name of the state machine process.
+  ## Returns
+    - `state`: The current state of the state machine.
+  """
+  @spec state(machine()) :: Hume.Machine.state()
+  def state(machine) do
+    GenServer.call(machine, :snapshot)
+    |> elem(1)
+  end
 end

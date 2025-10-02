@@ -146,6 +146,10 @@ defmodule Hume.Machine do
         end
       end
 
+      def handle_call(:snapshot, _from, %{snapshot: snapshot} = s) do
+        {:reply, snapshot, s}
+      end
+
       def handle_info(:tick_snapshot, %{count: count} = s) when count < @snapshot_every do
         Process.send_after(self(), :tick_snapshot, @snapshot_after)
         {:noreply, s}
