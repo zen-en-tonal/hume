@@ -3,8 +3,8 @@ defmodule ElixirTemplate.MixProject do
 
   def project do
     [
-      app: :my_app,
-      version: "0.1.0",
+      app: :hume,
+      version: "0.0.0",
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
       deps: deps()
@@ -14,7 +14,8 @@ defmodule ElixirTemplate.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Hume.Application, []}
     ]
   end
 
@@ -24,7 +25,8 @@ defmodule ElixirTemplate.MixProject do
       {:ex_doc, "~> 0.21", only: [:dev, :test], runtime: false},
       {:telemetry, "~> 1.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:stream_data, "~> 0.6", only: :test}
     ]
   end
 end
