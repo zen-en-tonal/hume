@@ -28,7 +28,7 @@ defmodule Hume.Heir do
 
       {tid, s2} ->
         true = :ets.give_away(tid, new_owner, :ok)
-        :telemetry.execute([:hume_heir, :transfer, :sent], %{}, %{name: name, tid: tid})
+        # :telemetry.execute([:hume_heir, :transfer, :sent], %{}, %{name: name, tid: tid})
         {:reply, {:ok, tid}, s2}
     end
   end

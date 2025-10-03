@@ -115,13 +115,15 @@ defmodule Hume.Machine do
       @snapshot_after :timer.seconds(30)
 
       def init(opts) do
+        name = find_name(opts)
+
         :telemetry.execute(
           [:hume_machine, :init],
           %{},
-          %{machine_id: {__MODULE__, find_name(opts)}}
+          %{machine_id: {__MODULE__, name}}
         )
 
-        {:ok, %{snapshot: nil, name: find_name(opts), count: 0}, {:continue, :replay}}
+        {:ok, %{snapshot: nil, name: name, count: 0}, {:continue, :replay}}
       end
 
       def start_link(opts \\ []) do
