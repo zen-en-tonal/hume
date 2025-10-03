@@ -20,6 +20,8 @@ defmodule HumeTest do
       do: System.unique_integer([:monotonic, :positive])
   end
 
+  doctest Hume
+
   test "start_link/2 and send_event/2" do
     {:ok, pid} = Hume.start_link(MyStateMachine, use_heir: false, name: :test_machine)
 

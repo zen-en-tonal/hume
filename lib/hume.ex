@@ -40,10 +40,10 @@ defmodule Hume do
         end
       end
 
-      iex> {:ok, pid} = Hume.start_link(MyStateMachine, [])
-      iex> Hume.send_event(pid, {:add, :foo, 42})
+      {:ok, pid} = Hume.start_link(MyStateMachine, [])
+      Hume.send_event(pid, {:add, :foo, 42})
       {:ok, {..., %{foo: 42}}}
-      iex> Hume.send_event(pid, {:remove, :foo})
+      Hume.send_event(pid, {:remove, :foo})
       {:ok, {..., %{}}}
 
   """
