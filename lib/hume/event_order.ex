@@ -8,7 +8,7 @@ defmodule Hume.EventOrder do
   """
 
   @type event :: {integer(), term()}
-  @type ordered :: {:ordered, [event()]}
+  @opaque ordered :: {:ordered, [event()]}
 
   @doc """
   Checks if a list of events is ordered by sequence number.
@@ -30,9 +30,10 @@ defmodule Hume.EventOrder do
       iex> Hume.EventOrder.ordered?([{2, :foo}, {1, :bar}])
       false
   """
-  @spec ordered?([event()]) :: boolean()
+  @spec ordered?([event()] | ordered()) :: boolean()
   def ordered?([]), do: true
   def ordered?([_]), do: true
+  def ordered?({:ordered, _}), do: true
 
   def ordered?([{s1, _} = _e1, {s2, _} = _e2 | rest]) when s1 < s2,
     do: ordered?([{s2, nil} | rest] |> normalize_pair())
