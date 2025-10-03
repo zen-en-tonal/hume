@@ -115,6 +115,12 @@ defmodule Hume.Machine do
       @snapshot_after :timer.seconds(30)
 
       def init(opts) do
+        :telemetry.execute(
+          [:hume_machine, :init],
+          %{},
+          %{machine_id: {__MODULE__, find_name(opts)}}
+        )
+
         {:ok, %{snapshot: nil, name: find_name(opts), count: 0}, {:continue, :replay}}
       end
 

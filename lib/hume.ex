@@ -46,6 +46,44 @@ defmodule Hume do
       Hume.send_event(pid, {:remove, :foo})
       {:ok, {..., %{}}}
 
+  ## Telemetry
+
+  Hume uses Elixir's Telemetry to emit notifications for important events such as state transitions and ETS table ownership transfers.
+
+  ### Hume.Heir
+
+    * `[:hume_heir, :transfer, :received]` - ETS table ownership received
+      - Metadata: `%{name: name, tid: tid}`
+    * `[:hume_heir, :transfer, :not_found]` - Ownership transfer requested but table not found
+      - Metadata: `%{name: name}`
+    * `[:hume_heir, :transfer, :sent]` - ETS table ownership transferred
+      - Metadata: `%{name: name, tid: tid}`
+
+  ### Hume.Machine
+
+    * `[:hume_machine, :init]` - State machine initialized
+      - Metadata: `%{machine_id}`
+    * `[:hume_machine, :replay, :done]` - Snapshot and event replay completed successfully
+      - Measurements: `%{total_ms, last_snapshot_ms, events_ms, replay_ms, event_count}`
+      - Metadata: `%{machine_id, seq}`
+    * `[:hume_machine, :replay, :error]` - Error during replay
+      - Measurements: `%{total_ms, last_snapshot_ms, events_ms, replay_ms, event_count}`
+      - Metadata: `%{machine_id, reason}`
+    * `[:hume_machine, :event, :accept]` - Event accepted and persisted successfully
+      - Measurements: `%{total_ms, handle_ms, persist_ms}`
+      - Metadata: `%{machine_id, seq}`
+    * `[:hume_machine, :event, :reject]` - Event processing failed
+      - Measurements: `%{total_ms}`
+      - Metadata: `%{machine_id, seq, reason}`
+    * `[:hume_machine, :snapshot, :skip]` - Snapshot skipped (below threshold)
+      - Measurements: `%{count, threshold}`
+      - Metadata: `%{machine_id}`
+    * `[:hume_machine, :snapshot, :done]` - Snapshot taken successfully
+      - Measurements: `%{take_snap_ms}`
+      - Metadata: `%{machine_id}`
+    * `[:hume_machine, :snapshot, :error]` - Snapshot failed
+      - Measurements: `%{take_snap_ms}`
+      - Metadata: `%{machine_id, reason}`
   """
 
   @type machine :: GenServer.server()
