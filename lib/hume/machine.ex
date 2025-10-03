@@ -205,18 +205,18 @@ defmodule Hume.Machine do
             tid
 
           {:error, :not_found} ->
-            :ets.new(__MODULE__, [
+            :ets.new(name, [
               :ordered_set,
-              {:read_concurrency, true},
+              {:read_concurrency, false},
               {:heir, Process.whereis(Hume.Heir), name}
             ])
         end
       end
 
-      def prepare_ets(_, :new) do
-        :ets.new(__MODULE__, [
+      def prepare_ets(name, :new) do
+        :ets.new(name, [
           :ordered_set,
-          {:read_concurrency, true}
+          {:read_concurrency, false}
         ])
       end
 
