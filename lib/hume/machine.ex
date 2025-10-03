@@ -171,11 +171,11 @@ defmodule Hume.Machine do
       end
 
       def evolve(event, snapshot) do
-        Hume.Machine.evolve(__MODULE__, event, snapshot)
+        Hume.evolve(__MODULE__, event, snapshot)
       end
 
       def replay(snapshot, events) do
-        Hume.Machine.replay(__MODULE__, snapshot, events)
+        Hume.replay(__MODULE__, snapshot, events)
       end
 
       defoverridable(next_sequence: 1)
@@ -259,67 +259,6 @@ defmodule Hume.Machine do
       defp find_name(opt) do
         Keyword.get(opt, :name, __MODULE__)
       end
-    end
-  end
-
-  @doc """
-  Evolves the state by applying a single event.
-
-  ## Parameters
-    - mod: The module implementing the `Hume.Machine` behaviour.
-    - event: The event to be applied.
-    - snapshot: A tuple containing the current offset and state.
-
-  ## Returns
-    - `{:ok, snapshot}` if the event is applied successfully.
-    - `{:error, reason}` if an error occurs during event handling or persistence.
-  """
-  @spec evolve(mod :: module(), Hume.Machine.event(), Hume.Machine.snapshot()) ::
-          {:ok, Hume.Machine.snapshot()} | {:error, term()}
-  def evolve(mod, event, snapshot) do
-    do_evolve(mod, event, snapshot)
-  end
-
-  defp do_evolve(_, {next, _}, {seq, _}) when next <= seq do
-    {:error, :stale_event}
-  end
-
-  defp do_evolve(mod, {next, event}, {_seq, state}) do
-    apply(mod, :handle_event, [event, state])
-    |> case do
-      {:ok, new_state} ->
-        {:ok, {next, new_state}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  @doc """
-  Replays a list of events starting from a given snapshot.
-
-  ## Parameters
-    - mod: The module implementing the `Hume.Machine` behaviour.
-    - snapshot: A tuple containing the offset and the state to start replaying from.
-    - events: A list of events to replay, each represented as a tuple of sequence number and event data.
-
-  ## Returns
-    - `{:ok, snapshot}` if all events are replayed successfully.
-    - `{:error, reason}` if an error occurs during event handling.
-  """
-  @spec replay(mod :: module(), Hume.Machine.snapshot(), [Hume.Machine.event()]) ::
-          {:ok, Hume.Machine.snapshot()} | {:error, term()}
-  def replay(mod, snapshot, events) do
-    events
-    |> Enum.reduce_while(snapshot, fn event, ss ->
-      case evolve(mod, event, ss) do
-        {:ok, new_ss} -> {:cont, new_ss}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-    |> case do
-      {:error, reason} -> {:error, reason}
-      ok -> {:ok, ok}
     end
   end
 end

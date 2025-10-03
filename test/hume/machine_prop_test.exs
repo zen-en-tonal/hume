@@ -1,25 +1,25 @@
-defmodule MyStateMachine do
-  @moduledoc false
-
-  use Hume.Machine, :use_ets
-
-  def init_state(_), do: %{}
-
-  def handle_event({:add, key, value}, state),
-    do: {:ok, Map.put(state || %{}, key, value)}
-
-  def handle_event({:remove, key}, state),
-    do: {:ok, Map.delete(state || %{}, key)}
-
-  def next_sequence(_name),
-    do: System.unique_integer([:monotonic, :positive])
-end
-
 defmodule Hume.Machine.PropTest do
   @moduledoc false
 
   use ExUnit.Case, async: true
   use ExUnitProperties
+
+  defmodule MyStateMachine do
+    @moduledoc false
+
+    use Hume.Machine, :use_ets
+
+    def init_state(_), do: %{}
+
+    def handle_event({:add, key, value}, state),
+      do: {:ok, Map.put(state || %{}, key, value)}
+
+    def handle_event({:remove, key}, state),
+      do: {:ok, Map.delete(state || %{}, key)}
+
+    def next_sequence(_name),
+      do: System.unique_integer([:monotonic, :positive])
+  end
 
   defp key_gen do
     member_of([:a, :b, :c, :d, :e])
