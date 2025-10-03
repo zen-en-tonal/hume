@@ -14,6 +14,8 @@ defmodule Hume.Machine do
   event store by passing `:use_ets` to the `use` macro.
   """
 
+  require Logger
+
   @type state :: term()
   @type event :: {seq(), term()}
   @type seq :: integer()
@@ -162,7 +164,9 @@ defmodule Hume.Machine do
             {:noreply, %{s | count: 0}}
 
           {:error, reason} ->
-            {:stop, reason, %{status: :error, snapshot: nil}}
+            Logger.error("Failed to take snapshot: #{inspect(reason)}")
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            {:noreply, %{s | count: 0}}
         end
       end
 
