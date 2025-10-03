@@ -104,4 +104,23 @@ defmodule Hume.EventOrder do
       true -> [eb | do_merge(ra, rb)]
     end
   end
+
+  @doc """
+  Returns the length of the event list.
+
+  Works with both raw event lists and `{:ordered, events}` tuples.
+  ## Examples
+
+      iex> Hume.EventOrder.len([])
+      0
+
+      iex> Hume.EventOrder.len([{1, :foo}, {2, :bar}])
+      2
+
+      iex> Hume.EventOrder.len({:ordered, [{1, :foo}, {2, :bar}]})
+      2
+  """
+  @spec len(ordered() | [event()]) :: non_neg_integer()
+  def len({:ordered, events}), do: length(events)
+  def len(events) when is_list(events), do: length(events)
 end

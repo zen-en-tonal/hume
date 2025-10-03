@@ -11,6 +11,7 @@ defmodule Hume.Heir do
 
   @impl true
   def handle_info({:"ETS-TRANSFER", tid, _from, name}, s) do
+    :telemetry.execute([:hume_heir, :transfer, :received], %{}, %{name: name, tid: tid})
     {:noreply, Map.put(s, name, tid)}
   end
 
@@ -22,10 +23,12 @@ defmodule Hume.Heir do
   def handle_call({:take, name, new_owner}, _from, s) do
     case Map.pop(s, name) do
       {nil, _} ->
+        :telemetry.execute([:hume_heir, :transfer, :not_found], %{}, %{name: name})
         {:reply, {:error, :not_found}, s}
 
       {tid, s2} ->
         true = :ets.give_away(tid, new_owner, :ok)
+        :telemetry.execute([:hume_heir, :transfer, :sent], %{}, %{name: name, tid: tid})
         {:reply, {:ok, tid}, s2}
     end
   end

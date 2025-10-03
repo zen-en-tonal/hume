@@ -123,28 +123,83 @@ defmodule Hume.Machine do
       end
 
       def handle_continue(:replay, %{name: name} = s) do
-        {since, state} = ss = last_snapshot(name) || {0, init_state(name)}
+        {last_snapshot_ms, {since, state} = ss} =
+          :timer.tc(fn -> last_snapshot(name) || {0, init_state(name)} end, :millisecond)
 
-        ss
-        |> replay(events(name, since) |> Hume.EventOrder.ensure_ordered())
+        {events_ms, events} =
+          :timer.tc(
+            fn -> events(name, since) |> Hume.EventOrder.ensure_ordered() end,
+            :millisecond
+          )
+
+        :timer.tc(fn -> replay(ss, events) end, :millisecond)
         |> case do
-          {:ok, {seq, state}} ->
+          {replay_ms, {:ok, {seq, state}}} ->
+            :telemetry.execute(
+              [:hume_machine, :replay, :done],
+              %{
+                total_ms: last_snapshot_ms + events_ms + replay_ms,
+                last_snapshot_ms: last_snapshot_ms,
+                events_ms: events_ms,
+                replay_ms: replay_ms,
+                event_count: events |> Hume.EventOrder.len()
+              },
+              %{machine_id: {__MODULE__, name}, seq: seq}
+            )
+
             Process.send_after(self(), :tick_snapshot, @snapshot_after)
             {:noreply, %{s | snapshot: {seq, state}}}
 
-          {:error, reason} ->
+          {replay_ms, {:error, reason}} ->
+            :telemetry.execute(
+              [:hume_machine, :replay, :error],
+              %{
+                total_ms: last_snapshot_ms + events_ms + replay_ms,
+                last_snapshot_ms: last_snapshot_ms,
+                events_ms: events_ms,
+                replay_ms: replay_ms,
+                event_count: events |> Hume.EventOrder.len()
+              },
+              %{machine_id: {__MODULE__, name}, reason: reason}
+            )
+
             {:stop, reason, %{s | napshot: nil}}
         end
       end
 
       def handle_call({:event, event}, _from, %{snapshot: snapshot, name: name, count: count} = s) do
+        t0 = System.monotonic_time(:millisecond)
+
         seq = next_sequence(name)
 
-        with {:ok, new_snapshot} <- evolve({seq, event}, snapshot),
-             :ok <- persist_event(name, {seq, event}) do
+        with {handle_time, {:ok, new_snapshot}} <-
+               :timer.tc(fn -> evolve({seq, event}, snapshot) end, :millisecond),
+             {persist_time, :ok} <-
+               :timer.tc(fn -> persist_event(name, {seq, event}) end, :millisecond) do
+          t1 = System.monotonic_time(:millisecond)
+
+          :telemetry.execute(
+            [:hume_machine, :event, :accept],
+            %{
+              total_ms: t1 - t0,
+              handle_ms: handle_time,
+              persist_ms: persist_time
+            },
+            %{machine_id: {__MODULE__, name}, seq: seq}
+          )
+
           {:reply, {:ok, new_snapshot}, %{s | snapshot: new_snapshot, count: count + 1}}
         else
-          {:error, reason} -> {:reply, {:error, reason}, s}
+          {:error, reason} ->
+            t1 = System.monotonic_time(:millisecond)
+
+            :telemetry.execute(
+              [:hume_machine, :event, :reject],
+              %{total_ms: t1 - t0},
+              %{machine_id: {__MODULE__, name}, seq: seq, reason: reason}
+            )
+
+            {:reply, {:error, reason}, s}
         end
       end
 
@@ -152,19 +207,39 @@ defmodule Hume.Machine do
         {:reply, snapshot, s}
       end
 
-      def handle_info(:tick_snapshot, %{count: count} = s) when count < @snapshot_every do
+      def handle_info(:tick_snapshot, %{count: count, name: name} = s)
+          when count < @snapshot_every do
+        :telemetry.execute(
+          [:hume_machine, :snapshot, :skip],
+          %{count: count, threshold: @snapshot_every},
+          %{machine_id: {__MODULE__, name}}
+        )
+
         Process.send_after(self(), :tick_snapshot, @snapshot_after)
         {:noreply, s}
       end
 
       def handle_info(:tick_snapshot, %{name: name, snapshot: snapshot} = s) do
-        case take_snapshot(name, snapshot) do
-          :ok ->
+        case :timer.rc(fn -> take_snapshot(name, snapshot) end, :millisecond) do
+          {take_snap_ms, :ok} ->
+            :telemetry.execute(
+              [:hume_machine, :snapshot, :done],
+              %{take_snap_ms: take_snap_ms},
+              %{machine_id: {__MODULE__, name}}
+            )
+
             Process.send_after(self(), :tick_snapshot, @snapshot_after)
             {:noreply, %{s | count: 0}}
 
-          {:error, reason} ->
+          {take_snap_ms, {:error, reason}} ->
             Logger.error("Failed to take snapshot: #{inspect(reason)}")
+
+            :telemetry.execute(
+              [:hume_machine, :snapshot, :error],
+              %{take_snap_ms: take_snap_ms},
+              %{machine_id: {__MODULE__, name}, reason: reason}
+            )
+
             Process.send_after(self(), :tick_snapshot, @snapshot_after)
             {:noreply, %{s | count: 0}}
         end
