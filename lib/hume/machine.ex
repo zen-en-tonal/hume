@@ -124,7 +124,7 @@ defmodule Hume.Machine do
         {since, state} = ss = last_snapshot(name) || {0, init_state(name)}
 
         ss
-        |> replay(events(name, since))
+        |> replay(events(name, since) |> Hume.EventOrder.ensure_ordered())
         |> case do
           {:ok, {seq, state}} ->
             Process.send_after(self(), :tick_snapshot, @snapshot_after)

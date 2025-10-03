@@ -169,15 +169,15 @@ defmodule Hume do
   ## Parameters
     - mod: The module implementing the `Hume.Machine` behaviour.
     - snapshot: A tuple containing the offset and the state to start replaying from.
-    - events: A list of events to replay, each represented as a tuple of sequence number and event data.
+    - events: A ordered list of events to be replayed.
 
   ## Returns
     - `{:ok, snapshot}` if all events are replayed successfully.
     - `{:error, reason}` if an error occurs during event handling.
   """
-  @spec replay(mod :: module(), Hume.Machine.snapshot(), [Hume.Machine.event()]) ::
+  @spec replay(mod :: module(), Hume.Machine.snapshot(), events :: Hume.EventOrder.ordered()) ::
           {:ok, Hume.Machine.snapshot()} | {:error, term()}
-  def replay(mod, snapshot, events) do
+  def replay(mod, snapshot, {:ordered, events}) do
     events
     |> Enum.reduce_while(snapshot, fn event, ss ->
       case evolve(mod, event, ss) do

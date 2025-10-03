@@ -111,7 +111,10 @@ defmodule HumeTest do
 
   test "replay/2 functionality" do
     init_snapshot = {0, %{}}
-    events = [{1, {:add, :foo, 42}}, {2, {:add, :bar, 100}}, {3, {:remove, :foo}}]
+
+    events =
+      [{1, {:add, :foo, 42}}, {2, {:add, :bar, 100}}, {3, {:remove, :foo}}]
+      |> Hume.EventOrder.ensure_ordered()
 
     {:ok, final_snapshot} = Hume.replay(MyStateMachine, init_snapshot, events)
     assert final_snapshot == {3, %{bar: 100}}
@@ -119,7 +122,10 @@ defmodule HumeTest do
 
   test "replay/2 with invalid event" do
     init_snapshot = {0, %{}}
-    events = [{1, {:add, :foo, 42}}, {2, {:unknown, :event}}, {3, {:remove, :foo}}]
+
+    events =
+      [{1, {:add, :foo, 42}}, {2, {:unknown, :event}}, {3, {:remove, :foo}}]
+      |> Hume.EventOrder.ensure_ordered()
 
     assert_raise FunctionClauseError, fn ->
       Hume.replay(MyStateMachine, init_snapshot, events)
@@ -128,8 +134,14 @@ defmodule HumeTest do
 
   test "replay/2 with partial events" do
     init_snapshot = {0, %{}}
-    events1 = [{1, {:add, :foo, 42}}, {2, {:add, :bar, 100}}]
-    events2 = [{3, {:remove, :foo}}, {4, {:add, :baz, 7}}]
+
+    events1 =
+      [{1, {:add, :foo, 42}}, {2, {:add, :bar, 100}}]
+      |> Hume.EventOrder.ensure_ordered()
+
+    events2 =
+      [{3, {:remove, :foo}}, {4, {:add, :baz, 7}}]
+      |> Hume.EventOrder.ensure_ordered()
 
     {:ok, snapshot_after_first} = Hume.replay(MyStateMachine, init_snapshot, events1)
     {:ok, final_snapshot} = Hume.replay(MyStateMachine, snapshot_after_first, events2)
@@ -137,19 +149,35 @@ defmodule HumeTest do
     assert final_snapshot == {4, %{bar: 100, baz: 7}}
   end
 
-  test "reply/2 with empty events" do
+  test "replay/2 with empty events" do
     init_snapshot = {0, %{foo: 42}}
-    events = []
+
+    events =
+      []
+      |> Hume.EventOrder.ensure_ordered()
 
     {:ok, final_snapshot} = Hume.replay(MyStateMachine, init_snapshot, events)
     assert final_snapshot == init_snapshot
   end
 
-  test "reply/2 with stale event" do
+  test "replay/2 with stale event" do
     init_snapshot = {2, %{foo: 42}}
-    events = [{1, {:add, :bar, 100}}, {2, {:remove, :foo}}]
+
+    events =
+      [{1, {:add, :bar, 100}}, {2, {:remove, :foo}}]
+      |> Hume.EventOrder.ensure_ordered()
 
     assert {:error, _reason} = Hume.replay(MyStateMachine, init_snapshot, events)
+  end
+
+  test "replay/2 prevents the raw list" do
+    init_snapshot = {0, %{}}
+
+    events = [{1, {:add, :foo, 42}}, {2, {:add, :bar, 100}}]
+
+    assert_raise FunctionClauseError, fn ->
+      Hume.replay(MyStateMachine, init_snapshot, events)
+    end
   end
 
   test "snapshot/1 on uninitialized machine" do
