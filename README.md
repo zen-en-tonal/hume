@@ -47,7 +47,7 @@ Add `hume` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:hume, "~> 0.1.0"}
+    {:hume, "~> 0.0.1"}
   ]
 end
 ```
