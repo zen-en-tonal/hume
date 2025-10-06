@@ -39,15 +39,13 @@ defmodule Hume do
           do: {:ok, Map.delete(state || %{}, key)}
       end
 
-      {:ok, pid} = Hume.start_link(MyProjection, stream: MyStream)
+      Hume.EventStore.ETS.start_link([])
+      Hume.start_link(MyProjection, stream: MyStream, projection: MyProjection)
 
       {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:add, :foo, 42})
-      %{foo: 42} = Hume.state(pid)
+      %{foo: 42} = Hume.state(MyProjection)
       {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:remove, :foo})
-      %{} = Hume.state(pid)
-
-  ## Telemetry
-
+      %{} = Hume.state(MyProjection)
 
   """
 
