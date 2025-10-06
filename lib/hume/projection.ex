@@ -51,7 +51,7 @@ defmodule Hume.Projection do
 
   @type stream :: term()
 
-  @type projection :: term()
+  @type projection :: atom()
 
   @type state :: term()
 
@@ -67,7 +67,7 @@ defmodule Hume.Projection do
           GenServer.option()
           | {:stream, stream() | [stream()]}
           | {:projection, projection()}
-          | {:use_heir, boolean()}
+          | {:registry, :local | :global | {registry :: module(), name :: term()}}
 
   @type macro_option() ::
           {:use_ets, boolean()}
@@ -181,6 +181,16 @@ defmodule Hume.Projection do
       @snapshot_after snap_after
       @catch_up_after catch_up_after
       @strict_online strict_online
+
+      def child_spec(opts) do
+        %{
+          id: {__MODULE__, Keyword.fetch!(opts, :projection)},
+          start: {Hume.Projection, :start_link, [__MODULE__, opts]},
+          restart: :permanent,
+          shutdown: 5000,
+          type: :worker
+        }
+      end
 
       @impl true
       def init(%{streams: streams} = opts) do
@@ -589,6 +599,7 @@ defmodule Hume.Projection do
   ## Parameters
     - machine: The PID or name of the state machine process.
     - timeout: The maximum time to wait for a response (default is 5000 ms).
+
   ## Returns
     - `state`: The current state of the state machine.
   """
@@ -604,8 +615,8 @@ defmodule Hume.Projection do
           | {:error, term()}
   def parse_options(opts) do
     with {:ok, {map, rest}} <- do_parse_options(opts, %{}, []),
-         {:ok, map} <- put_optional(map),
-         {:ok, map} <- validate_options(map) do
+         {:ok, map} <- validate_options(map),
+         {:ok, map} <- put_optional(map) do
       {:ok, {map, rest}}
     end
   end
@@ -615,12 +626,16 @@ defmodule Hume.Projection do
   end
 
   defp do_parse_options([{:projection, proj} | tail], map, rest)
-       when is_atom(proj) or is_binary(proj) do
+       when is_atom(proj) do
     do_parse_options(tail, Map.put(map, :projection, proj), rest)
   end
 
-  defp do_parse_options([{:use_heir, use_heir} | tail], map, rest) when is_boolean(use_heir) do
-    do_parse_options(tail, Map.put(map, :use_heir, use_heir), rest)
+  defp do_parse_options([{:registry, registry} | tail], map, rest) do
+    do_parse_options(tail, Map.put(map, :registry, registry), rest)
+  end
+
+  defp do_parse_options([{:name, name} | tail], map, rest) do
+    do_parse_options(tail, Map.put(map, :name, name), rest)
   end
 
   defp do_parse_options([h | t], map, rest) do
@@ -632,19 +647,32 @@ defmodule Hume.Projection do
   end
 
   defp put_optional(map) do
-    map
-    |> Map.put_new(:use_heir, false)
-    |> Map.put_new(
-      :projection,
-      "projection:" <> (:erlang.phash2(map[:stream]) |> Integer.to_string())
-    )
-    |> then(&{:ok, &1})
+    opts =
+      map
+      |> Map.put_new(:registry, :local)
+      |> Map.put(:name, map.projection)
+
+    gs_name = via_name(opts.registry, opts.projection)
+
+    {:ok, Map.put(opts, :genserver_name, gs_name)}
   end
+
+  defp via_name(:global, name),
+    do: {:global, name}
+
+  defp via_name({registry_mod, registry_name}, name),
+    do: {:via, registry_mod, {registry_name, name}}
+
+  defp via_name(:local, name),
+    do: name
 
   defp validate_options(map) do
     cond do
       map[:streams] == nil ->
         {:error, :missing_stream}
+
+      map[:projection] == nil ->
+        {:error, :missing_projection}
 
       true ->
         {:ok, map}
@@ -692,5 +720,21 @@ defmodule Hume.Projection do
         {:halt, {:error, :invalid_module}}
       end
     end)
+  end
+
+  @spec start_link(module(), [option()]) :: {:ok, pid()} | {:error, term()}
+  def start_link(mod, opts) do
+    with :ok <- validate(mod),
+         {:ok, {opts, rest}} <- parse_options(opts) do
+      GenServer.start_link(mod, opts, Keyword.put(rest, :name, opts.genserver_name))
+    end
+  end
+
+  @spec start(module(), [option()]) :: {:ok, pid()} | {:error, term()}
+  def start(mod, opts) do
+    with :ok <- validate(mod),
+         {:ok, {opts, rest}} <- parse_options(opts) do
+      GenServer.start(mod, opts, Keyword.put(rest, :name, opts.genserver_name))
+    end
   end
 end

@@ -54,9 +54,10 @@ defmodule Hume do
   @doc """
   Starts a state machine process.
 
-  ## Parameters
-    - mod: The module implementing the state machine (must use `Hume.Machine`).
-    - opts: See `GenServer.start_link/3` options. Additionally, you can pass `{:use_heir, boolean()}` to specify whether to use the hair process for ETS table ownership transfer.
+  ## Options
+    - `:stream` - The stream identifier (required).
+    - `:projection` - The unique name for the projection (required). GenServer name will be set to this value.
+    - `:registry` - The registry module for process registration (default :local). Can be `:local`, `:global`, or `{module, name}` for custom registries.
 
   ## Returns
     - `{:ok, pid}` if the process starts successfully.
@@ -64,29 +65,17 @@ defmodule Hume do
   """
   @spec start_link(module(), [Hume.Projection.option()]) :: GenServer.on_start()
   def start_link(mod, opts \\ []) do
-    with {:ok, {proj_opts, opts}} <- Hume.Projection.parse_options(opts),
-         :ok <- Hume.Projection.validate(mod) do
-      GenServer.start_link(mod, proj_opts, opts)
-    end
+    Hume.Projection.start_link(mod, opts)
   end
 
   @doc """
   Starts a state machine process without linking it to the current process.
 
-  ## Parameters
-    - mod: The module implementing the state machine (must use `Hume.Projection`).
-    - opts: See `Hume.Projection`.
-
-  ## Returns
-    - `{:ok, pid}` if the process starts successfully.
-    - `{:error, reason}` if the process fails to start.
+  See `Hume.start_link/2` for options and return values.
   """
   @spec start(module(), [Hume.Projection.option()]) :: GenServer.on_start()
   def start(mod, opts \\ []) do
-    with {:ok, {proj_opts, opts}} <- Hume.Projection.parse_options(opts),
-         :ok <- Hume.Projection.validate(mod) do
-      GenServer.start(mod, proj_opts, opts)
-    end
+    Hume.Projection.start(mod, opts)
   end
 
   @doc """

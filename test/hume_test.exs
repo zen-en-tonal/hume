@@ -52,6 +52,65 @@ defmodule HumeTest do
       assert {:error, _} =
                Hume.start_link(:invalid_module, stream: unique_name(), projection: unique_name())
     end
+
+    test "singleton projection name on local" do
+      name = unique_name()
+
+      assert {:ok, pid1} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name
+               )
+
+      assert {:error, {:already_started, ^pid1}} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name
+               )
+    end
+
+    test "singleton projection name on global" do
+      name = unique_name()
+
+      assert {:ok, pid1} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name,
+                 registry: :global
+               )
+
+      assert {:error, {:already_started, ^pid1}} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name,
+                 registry: :global
+               )
+
+      assert ^pid1 = :global.whereis_name(name)
+    end
+
+    test "singleton projection name on via" do
+      name = unique_name()
+      registry = unique_name()
+
+      {:ok, _} = Registry.start_link(keys: :unique, name: registry)
+
+      assert {:ok, pid1} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name,
+                 registry: {Registry, registry}
+               )
+
+      assert {:error, {:already_started, ^pid1}} =
+               Hume.start_link(MyProjection,
+                 stream: unique_name(),
+                 projection: name,
+                 registry: {Registry, registry}
+               )
+
+      assert [{^pid1, _}] = Registry.lookup(registry, name)
+    end
   end
 
   describe "start/2" do
@@ -154,7 +213,8 @@ defmodule HumeTest do
       {:ok, pid} =
         Hume.start_link(MyProjection,
           stream: [name1, name2],
-          use_heir: false
+          use_heir: false,
+          projection: unique_name()
         )
 
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name1, {:add, :foo, 42})
@@ -171,5 +231,6 @@ defmodule HumeTest do
   defp unique_name do
     System.unique_integer()
     |> Integer.to_string()
+    |> String.to_atom()
   end
 end

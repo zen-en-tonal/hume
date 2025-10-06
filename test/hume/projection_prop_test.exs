@@ -54,10 +54,8 @@ defmodule Hume.Projection.PropTest do
 
         {:ok, pid} =
           Hume.start_link(SUT,
-            use_heir: false,
-            name: name,
             stream: name,
-            projection: name |> Atom.to_string()
+            projection: unique_name()
           )
 
         expected =
@@ -82,10 +80,8 @@ defmodule Hume.Projection.PropTest do
 
         {:ok, pid} =
           Hume.start_link(SUT,
-            use_heir: false,
-            name: name,
             stream: name,
-            projection: name |> Atom.to_string()
+            projection: unique_name()
           )
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, left)
@@ -108,14 +104,13 @@ defmodule Hume.Projection.PropTest do
               first <- list_of(payload_gen(), max_length: 100),
               then <- list_of(payload_gen(), max_length: 100)
             ) do
+        projection = unique_name()
         name = unique_name()
 
         {:ok, pid} =
           Hume.start(SUT,
-            use_heir: true,
-            name: name,
             stream: name,
-            projection: name |> Atom.to_string()
+            projection: projection
           )
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, first)
@@ -125,10 +120,8 @@ defmodule Hume.Projection.PropTest do
 
         {:ok, pid} =
           Hume.start(SUT,
-            use_heir: true,
-            name: name,
             stream: name,
-            projection: name |> Atom.to_string()
+            projection: projection
           )
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, then)
