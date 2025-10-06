@@ -6,6 +6,7 @@ defmodule Hume.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Phoenix.PubSub, name: Hume.Bus},
       Hume.Heir
     ]
 

@@ -8,7 +8,7 @@ defmodule Hume.EventOrder do
   """
 
   @type event :: {integer(), term()}
-  @opaque ordered :: {:ordered, [event()]}
+  @type ordered :: {:ordered, [event()]}
 
   @doc """
   Checks if a list of events is ordered by sequence number.
@@ -123,4 +123,20 @@ defmodule Hume.EventOrder do
   @spec len(ordered() | [event()]) :: non_neg_integer()
   def len({:ordered, events}), do: length(events)
   def len(events) when is_list(events), do: length(events)
+
+  @doc """
+  Converts an `{:ordered, events}` tuple to a raw event list.
+  If given a raw event list, returns it as-is.
+  ## Examples
+
+      iex> Hume.EventOrder.to_list({:ordered, [{1, :foo}, {2, :bar}]})
+      [{1, :foo}, {2, :bar}]
+
+      iex> Hume.EventOrder.to_list([{1, :foo}, {2, :bar}])
+      [{1, :foo}, {2, :bar}]
+
+  """
+  @spec to_list(ordered() | [event()]) :: [event()]
+  def to_list({:ordered, events}), do: events
+  def to_list(events) when is_list(events), do: events
 end

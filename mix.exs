@@ -32,8 +32,9 @@ defmodule Hume.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ex_doc, "~> 0.21", only: [:dev, :test], runtime: false},
       {:telemetry, "~> 1.0"},
+      {:phoenix_pubsub, "~> 2.0"},
+      {:ex_doc, "~> 0.21", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 0.6", only: :test}

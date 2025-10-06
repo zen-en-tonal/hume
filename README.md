@@ -6,7 +6,7 @@ It provides a framework for defining state machines that handle events, maintain
 
 ## Features
 
-- **Define state machines** using a simple behavior (`Hume.Machine`)
+- **Define state machines** using a simple behavior (`Hume.Projection`)
 - **Handle and persist events** to an event store (in-memory or ETS-based)
 - **Take snapshots** of the current state for efficient recovery
 - **Transfer ETS table ownership** using a dedicated heir process
@@ -14,30 +14,30 @@ It provides a framework for defining state machines that handle events, maintain
 
 ## Usage
 
-To get started with Hume, define a state machine by creating a module that uses `Hume.Machine` and implements the required callbacks:
+To get started with Hume, define a state machine by creating a module that uses `Hume.Projection` and implements the required callbacks:
 
 ```elixir
-defmodule MyStateMachine do
-  use Hume.Machine, :use_ets
+defmodule MyProjection do
+  use Hume.Projection, use_ets: true, store: Hume.EventStore.ETS
 
-  def init_state(_) do
-    %{}
-  end
+  @impl true
+  def init_state(_), do: %{}
 
-  def handle_event({:add, key, value}, state) do
-    {:ok, Map.put(state, key, value)}
-  end
+  @impl true
+  def handle_event({:add, key, value}, state),
+    do: {:ok, Map.put(state || %{}, key, value)}
 
-  def handle_event({:remove, key}, state) do
-    {:ok, Map.delete(state, key)}
-  end
+  @impl true
+  def handle_event({:remove, key}, state),
+    do: {:ok, Map.delete(state || %{}, key)}
 end
 
-{:ok, pid} = Hume.start_link(MyStateMachine, [])
-Hume.send_event(pid, {:add, :foo, 42})
-{:ok, {..., %{foo: 42}}}
-Hume.send_event(pid, {:remove, :foo})
-{:ok, {..., %{}}}
+{:ok, pid} = Hume.start_link(MyProjection, stream: MyStream)
+
+{:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:add, :foo, 42})
+%{foo: 42} = Hume.state(pid)
+{:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:remove, :foo})
+%{} = Hume.state(pid)
 ```
 
 ## Installation

@@ -1,0 +1,618 @@
+defmodule Hume.Projection do
+  @moduledoc """
+  Behaviour and macros for defining event-sourced state machines.
+
+  This module provides a behaviour that can be implemented by modules to define
+  event-sourced state machines. It also includes macros to automatically generate
+  boilerplate code for managing state, handling events, taking snapshots, and
+  persisting events.
+
+  ## Usage
+  To use this module, define a new module and use `Hume.Projection` with the
+  desired options. Implement the required callbacks to define the initial state,
+  event handling logic, and snapshot management.
+
+  ## Options
+  When using `Hume.Projection`, you can provide the following options:
+    - `:store` (required): The module implementing the event store behaviour.
+    - `:use_ets`: Use ETS for snapshot storage (default is false).
+    - `:snapshot_every`: Number of events after which to take a snapshot (default is 100).
+    - `:snapshot_after`: Time in milliseconds after which to take a snapshot (default is 30 seconds).
+    - `:catch_up_after`: Time in milliseconds after which to check for new events (default is 30 seconds).
+    - `:strict_online`: Whether to enforce strict event handling during online catch-up (default is true).
+
+  ## Callbacks
+  The following callbacks must be implemented by the module using `Hume.Projection`:
+    - `init_state/1`: Initializes the state of the machine.
+    - `handle_event/2`: Handles an event and updates the state.
+    - `last_snapshot/1`: Retrieves the last snapshot of the machine.
+    - `persist_snapshot/2`: Persists a snapshot of the current state.
+
+  ## Example
+      defmodule MyProjection do
+        use Hume.Projection, use_ets: true, store: MyEventStore
+
+        @impl true
+        def init_state(_), do: %{}
+
+        @impl true
+        def handle_event({:add, key, value}, state),
+          do: {:ok, Map.put(state || %{}, key, value)}
+
+        @impl true
+        def handle_event({:remove, key}, state),
+          do: {:ok, Map.delete(state || %{}, key)}
+      end
+  """
+
+  alias Hume.{Bus, EventOrder, Heir}
+
+  require Logger
+
+  @type stream :: term()
+
+  @type projection :: term()
+
+  @type state :: term()
+
+  @type event :: {seq(), term()}
+
+  @type seq :: integer()
+
+  @type offset :: seq()
+
+  @type snapshot :: {offset(), state() | nil}
+
+  @type option() ::
+          GenServer.option()
+          | {:stream, stream() | [stream()]}
+          | {:projection, projection()}
+          | {:use_heir, boolean()}
+
+  @type macro_option() ::
+          {:use_ets, boolean()}
+          | {:store, module()}
+          | {:snapshot_every, non_neg_integer()}
+          | {:snapshot_after, non_neg_integer()}
+          | {:catch_up_after, non_neg_integer()}
+          | {:strict_online, boolean()}
+
+  @doc """
+  Initial state of the machine.
+
+  ## Parameters
+    - name: The name or identifier of the machine.
+
+  ## Returns
+    - The initial state of the machine.
+  """
+  @callback init_state(projection()) :: state()
+
+  @doc """
+  Handles an event and updates the state accordingly.
+
+  ## Parameters
+    - event: The event to be handled.
+    - state: The current state of the machine.
+
+  ## Returns
+    - `{:ok, new_state}` if the event was handled successfully, where `new_state` is the updated state.
+    - `{:error, reason}` if an error occurred while handling the event.
+  """
+  @callback handle_event(event :: term(), state()) :: {:ok, state()} | {:error, term()}
+
+  @doc """
+  Retrieves the last snapshot of the machine.
+
+  ## Returns
+    - `snapshot` if a snapshot exists, where `snapshot` is a tuple containing the offset and state.
+    - `nil` if no snapshot exists.
+  """
+  @callback last_snapshot(projection()) :: snapshot() | nil
+
+  @doc """
+  Persists a snapshot of the current state.
+
+  ## Parameters
+    - snapshot: A tuple containing the offset and the current state.
+
+  ## Returns
+    - `:ok` if the snapshot was taken successfully.
+    - `{:error, reason}` if an error occurred while taking the snapshot.
+  """
+  @callback persist_snapshot(projection(), snapshot()) :: :ok | {:error, term()}
+
+  @spec __using__(opts :: [macro_option()]) :: Macro.t()
+  defmacro __using__(opts) do
+    quote do
+      unquote(validate_opts(opts))
+      unquote(impl_genserver(opts))
+      unquote(impl_default(opts))
+    end
+  end
+
+  defp validate_opts(opts) do
+    allowed_opts = [
+      :use_ets,
+      :store,
+      :snapshot_every,
+      :snapshot_after,
+      :catch_up_after,
+      :strict_online
+    ]
+
+    invalid_opts = Keyword.keys(opts) -- allowed_opts
+
+    if invalid_opts != [] do
+      raise ArgumentError, "Invalid options for Hume.Projection: #{inspect(invalid_opts)}"
+    end
+
+    case Hume.EventStore.validate(opts[:store]) do
+      :ok -> :ok
+      {:error, reason} -> raise ArgumentError, "Invalid event store module: #{inspect(reason)}"
+    end
+
+    :ok
+  end
+
+  defp impl_genserver(macro_opts) do
+    store_mod = Keyword.fetch!(macro_opts, :store)
+    snap_every = Keyword.get(macro_opts, :snapshot_every, 100)
+    snap_after = Keyword.get(macro_opts, :snapshot_after, :timer.seconds(30))
+    catch_up_after = Keyword.get(macro_opts, :catch_up_after, :timer.seconds(30))
+    strict_online = Keyword.get(macro_opts, :strict_online, true)
+
+    quote bind_quoted: [
+            store_mod: store_mod,
+            snap_every: snap_every,
+            snap_after: snap_after,
+            catch_up_after: catch_up_after,
+            strict_online: strict_online
+          ],
+          location: :keep do
+      use GenServer
+
+      require Logger
+
+      @behaviour Hume.Projection
+
+      @store store_mod
+      @snapshot_every snap_every
+      @snapshot_after snap_after
+      @catch_up_after catch_up_after
+      @strict_online strict_online
+
+      @impl true
+      def init(%{streams: streams} = opts) do
+        for stream <- streams, do: Bus.subscribe(@store, stream)
+
+        maybe_init_ets(opts)
+
+        state =
+          opts
+          |> Map.put(:count, 0)
+          |> Map.put(:snapshot, nil)
+
+        {:ok, state, {:continue, :catch_up}}
+      end
+
+      @impl true
+      def handle_continue(:catch_up, %{streams: streams, projection: proj} = s) do
+        {last_snapshot_ms, ss} =
+          :timer.tc(
+            fn -> last_snapshot(proj) || {0, init_state(proj)} end,
+            :millisecond
+          )
+
+        case catch_up(streams, ss, strict: false) do
+          {:ok, new_ss, count} ->
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            Process.send_after(self(), :tick_catch_up, @catch_up_after)
+            {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+
+          {:error, reason} ->
+            {:stop, reason, %{s | snapshot: nil}}
+        end
+      end
+
+      @impl true
+      def handle_info({:hint, stream, _last_seq}, %{snapshot: ss} = s) do
+        case catch_up(stream |> List.wrap(), ss, strict: @strict_online) do
+          {:ok, {seq, state}, count} ->
+            {:noreply, %{s | snapshot: {seq, state}, count: s.count + count}}
+
+          {:error, reason} ->
+            {:stop, reason, %{s | snapshot: nil}}
+        end
+      end
+
+      def handle_info(:tick_snapshot, %{count: count} = s)
+          when count < @snapshot_every do
+        Process.send_after(self(), :tick_snapshot, @snapshot_after)
+        {:noreply, s}
+      end
+
+      def handle_info(:tick_snapshot, %{projection: proj, snapshot: snapshot} = s) do
+        case :timer.tc(fn -> persist_snapshot(proj, snapshot) end, :millisecond) do
+          {take_snap_ms, :ok} ->
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            {:noreply, %{s | count: 0}}
+
+          {take_snap_ms, {:error, reason}} ->
+            Logger.error("Failed to take snapshot: #{inspect(reason)}")
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            {:noreply, %{s | count: 0}}
+        end
+      end
+
+      def handle_info(:tick_catch_up, %{streams: streams, snapshot: ss} = s) do
+        case catch_up(streams, ss, strict: @strict_online) do
+          {:ok, new_ss, count} ->
+            Process.send_after(self(), :tick_catch_up, @catch_up_after)
+            {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+
+          {:error, reason} ->
+            {:stop, reason, %{s | snapshot: nil}}
+        end
+      end
+
+      @impl true
+      def handle_call(:snapshot, _from, %{snapshot: snapshot} = s) do
+        {:reply, snapshot, s}
+      end
+
+      def handle_call(:take_snapshot, _from, %{projection: proj, snapshot: snapshot} = s) do
+        case persist_snapshot(proj, snapshot) do
+          :ok ->
+            {:reply, :ok, %{s | count: 0}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, s}
+        end
+      end
+
+      def handle_call(:catch_up, _from, %{streams: streams, snapshot: ss} = s) do
+        case catch_up(streams, ss, strict: @strict_online) do
+          {:ok, new_ss, count} ->
+            {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
+
+          {:error, reason} ->
+            {:stop, reason, %{s | snapshot: nil}}
+        end
+      end
+
+      def store, do: @store
+
+      defp events(streams, from) do
+        streams
+        |> Enum.reduce(EventOrder.ensure_ordered([]), fn stream, acc ->
+          EventOrder.merge_ordered(acc, @store.events(stream, from))
+        end)
+      end
+
+      defp catch_up(streams, {since, state} = last_snapshot, opts) do
+        strict = Keyword.get(opts, :strict, true)
+
+        {events_ms, events} =
+          :timer.tc(
+            fn -> events(streams, since) end,
+            :millisecond
+          )
+
+        :timer.tc(
+          fn -> Hume.Projection.replay(__MODULE__, last_snapshot, events, strict: strict) end,
+          :millisecond
+        )
+        |> case do
+          {replay_ms, {:ok, {seq, state}}} ->
+            {:ok, {seq, state}, events |> EventOrder.len()}
+
+          {replay_ms, {:error, reason}} ->
+            {:error, reason}
+        end
+      end
+
+      @before_compile {Hume.Projection, :add_handle_event_fallback}
+    end
+  end
+
+  defp impl_default(opts) when is_list(opts) do
+    if Keyword.get(opts, :use_ets, false) do
+      impl_ets_default()
+    else
+      impl_default()
+    end
+  end
+
+  defp impl_ets_default() do
+    quote location: :keep do
+      defp maybe_init_ets(%{projection: proj, use_heir: heir?}) do
+        mode =
+          if heir? do
+            :heir
+          else
+            :new
+          end
+
+        prepare_ets(String.to_atom(proj), mode)
+      end
+
+      defp prepare_ets(name, :heir) do
+        case Heir.request_take(name, self()) do
+          {:ok, tid} ->
+            tid
+
+          {:error, :not_found} ->
+            :ets.new(name, [
+              :named_table,
+              {:heir, Process.whereis(Heir), name}
+            ])
+        end
+      end
+
+      defp prepare_ets(name, :new) do
+        :ets.new(name, [:named_table])
+      end
+
+      @impl true
+      def last_snapshot(proj) do
+        case :ets.lookup(String.to_existing_atom(proj), :snapshot) do
+          [{:snapshot, snapshot}] -> snapshot
+          [] -> nil
+        end
+      end
+
+      @impl true
+      def persist_snapshot(proj, snapshot) do
+        true = :ets.insert(String.to_existing_atom(proj), {:snapshot, snapshot})
+        :ok
+      end
+
+      def handle_info({:"ETS-TRANSFER", _, _, _}, s) do
+        {:noreply, s}
+      end
+    end
+  end
+
+  defp impl_default() do
+    quote location: :keep do
+      defp maybe_init_ets(_), do: :ok
+    end
+  end
+
+  @doc false
+  defmacro add_handle_event_fallback(_env) do
+    quote do
+      @impl true
+      def handle_event(_, _), do: {:error, :unknown_event}
+    end
+  end
+
+  @doc """
+  Evolves the state by applying a single event.
+
+  ## Parameters
+    - mod: The module implementing the `Hume.Projection` behaviour.
+    - event: The event to be applied.
+    - snapshot: A tuple containing the current offset and state.
+
+  ## Returns
+    - `{:ok, snapshot}` if the event is applied successfully.
+    - `{:error, reason}` if an error occurs during event handling or persistence.
+  """
+  @spec evolve(mod :: module(), event(), snapshot()) ::
+          {:ok, snapshot()} | {:error, term()}
+  def evolve(mod, event, snapshot, opts \\ []) do
+    do_evolve(mod, event, snapshot, opts)
+  end
+
+  defp do_evolve(_, {next, _}, {seq, _}, _) when next <= seq do
+    {:error, :stale_event}
+  end
+
+  defp do_evolve(mod, {next, event}, {_seq, state}, opts) do
+    strict = Keyword.get(opts, :strict, true)
+
+    apply(mod, :handle_event, [event, state])
+    |> case do
+      {:ok, new_state} ->
+        {:ok, {next, new_state}}
+
+      {:error, :unknown_event} when not strict ->
+        Logger.warning("Ignoring unknown event: #{inspect({next, event})}")
+        {:ok, {next, state}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Replays a list of events starting from a given snapshot.
+
+  ## Parameters
+    - mod: The module implementing the `Hume.Projection` behaviour.
+    - snapshot: A tuple containing the offset and the state to start replaying from.
+    - events: A ordered list of events to be replayed.
+
+  ## Returns
+    - `{:ok, snapshot}` if all events are replayed successfully.
+    - `{:error, reason}` if an error occurs during event handling.
+  """
+  @spec replay(mod :: module(), snapshot(), events :: EventOrder.ordered()) ::
+          {:ok, snapshot()} | {:error, term()}
+  def replay(mod, snapshot, {:ordered, events}, opts \\ []) do
+    strict = Keyword.get(opts, :strict, true)
+
+    events
+    |> Enum.reduce_while(snapshot, fn event, ss ->
+      case evolve(mod, event, ss, strict: strict) do
+        {:ok, new_ss} -> {:cont, new_ss}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:error, reason} -> {:error, reason}
+      ok -> {:ok, ok}
+    end
+  end
+
+  @doc """
+  Requests the state machine to take a snapshot of its current state.
+
+  ## Parameters
+    - server: The PID or name of the state machine process.
+    - timeout: The maximum time to wait for a response (default is 5000 ms).
+
+  ## Returns
+    - `:ok` if the snapshot was taken successfully.
+    - `{:error, reason}` if there was an error taking the snapshot.
+  """
+  @spec take_snapshot(GenServer.server(), timeout :: non_neg_integer()) ::
+          :ok | {:error, term()}
+  def take_snapshot(server, timeout \\ 5_000) do
+    GenServer.call(server, :take_snapshot, timeout)
+  end
+
+  @doc """
+  Requests the state machine to catch up by processing any new events.
+
+  ## Parameters
+    - server: The PID or name of the state machine process.
+    - timeout: The maximum time to wait for a response (default is 5000 ms).
+
+  ## Returns
+    - `:ok` if the catch-up was successful.
+    - `{:error, reason}` if there was an error during catch-up.
+  """
+  @spec catch_up(GenServer.server(), timeout :: non_neg_integer()) ::
+          :ok | {:error, term()}
+  def catch_up(server, timeout \\ 5_000) do
+    GenServer.call(server, :catch_up, timeout)
+  end
+
+  @doc """
+  Retrieves the current snapshot of the state machine.
+
+  ## Parameters
+    - machine: The PID or name of the state machine process.
+    - timeout: The maximum time to wait for a response (default is 5000 ms).
+  ## Returns
+    - `snapshot`: The current snapshot of the state machine.
+  """
+  @spec snapshot(GenServer.server(), timeout()) :: Hume.Projection.snapshot()
+  def snapshot(machine, timeout \\ 5_000) do
+    GenServer.call(machine, :snapshot, timeout)
+  end
+
+  @doc """
+  Retrieves the current state of the state machine.
+
+  ## Parameters
+    - machine: The PID or name of the state machine process.
+    - timeout: The maximum time to wait for a response (default is 5000 ms).
+  ## Returns
+    - `state`: The current state of the state machine.
+  """
+  @spec state(GenServer.server(), timeout()) :: Hume.Projection.state()
+  def state(machine, timeout \\ 5_000) do
+    GenServer.call(machine, :snapshot, timeout)
+    |> elem(1)
+  end
+
+  @doc false
+  @spec parse_options(keyword()) ::
+          {:ok, {opts :: map(), rest :: keyword()}}
+          | {:error, term()}
+  def parse_options(opts) do
+    with {:ok, {map, rest}} <- do_parse_options(opts, %{}, []),
+         {:ok, map} <- put_optional(map),
+         {:ok, map} <- validate_options(map) do
+      {:ok, {map, rest}}
+    end
+  end
+
+  defp do_parse_options([{:stream, stream} | tail], map, rest) do
+    do_parse_options(tail, Map.put(map, :streams, List.wrap(stream)), rest)
+  end
+
+  defp do_parse_options([{:projection, proj} | tail], map, rest)
+       when is_atom(proj) or is_binary(proj) do
+    do_parse_options(tail, Map.put(map, :projection, proj), rest)
+  end
+
+  defp do_parse_options([{:use_heir, use_heir} | tail], map, rest) when is_boolean(use_heir) do
+    do_parse_options(tail, Map.put(map, :use_heir, use_heir), rest)
+  end
+
+  defp do_parse_options([h | t], map, rest) do
+    do_parse_options(t, map, [h | rest])
+  end
+
+  defp do_parse_options([], map, rest) do
+    {:ok, {map, rest}}
+  end
+
+  defp put_optional(map) do
+    map
+    |> Map.put_new(:use_heir, false)
+    |> Map.put_new(
+      :projection,
+      "projection:" <> (:erlang.phash2(map[:stream]) |> Integer.to_string())
+    )
+    |> then(&{:ok, &1})
+  end
+
+  defp validate_options(map) do
+    cond do
+      map[:streams] == nil ->
+        {:error, :missing_stream}
+
+      true ->
+        {:ok, map}
+    end
+  end
+
+  @doc """
+  Retrieves the event store module used by the projection.
+
+  ## Parameters
+    - mod: The module implementing the `Hume.Projection` behaviour.
+
+  ## Returns
+    - `store`: The event store module.
+  """
+  @spec store(module()) :: module()
+  def store(mod) do
+    mod.store()
+  end
+
+  @doc """
+  Validates that the given module implements the `Hume.Projection` behaviour.
+
+  ## Parameters
+    - mod: The module to be validated.
+
+  ## Returns
+    - `:ok` if the module implements the `Hume.Projection` behaviour.
+    - `{:error, reason}` if the module does not implement the behaviour.
+  """
+  @spec validate(module()) :: :ok | {:error, :invalid_module}
+  def validate(mod) do
+    functions = [
+      {:init_state, 1},
+      {:handle_event, 2},
+      {:last_snapshot, 1},
+      {:persist_snapshot, 2}
+    ]
+
+    functions
+    |> Enum.reduce_while(:ok, fn {fun, arity}, acc ->
+      if function_exported?(mod, fun, arity) do
+        {:cont, acc}
+      else
+        {:halt, {:error, :invalid_module}}
+      end
+    end)
+  end
+end
