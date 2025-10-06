@@ -45,7 +45,7 @@ defmodule Hume.Projection do
       end
   """
 
-  alias Hume.{Bus, EventOrder, Heir}
+  alias Hume.{Bus, EventOrder}
 
   require Logger
 
@@ -186,12 +186,20 @@ defmodule Hume.Projection do
       def init(%{streams: streams} = opts) do
         for stream <- streams, do: Bus.subscribe(@store, stream)
 
-        maybe_init_ets(opts)
-
         state =
           opts
           |> Map.put(:count, 0)
           |> Map.put(:snapshot, nil)
+
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :init
+          ],
+          %{},
+          %{module: __MODULE__, opts: opts}
+        )
 
         {:ok, state, {:continue, :catch_up}}
       end
@@ -204,15 +212,40 @@ defmodule Hume.Projection do
             :millisecond
           )
 
-        case catch_up(streams, ss, strict: false) do
-          {:ok, new_ss, count} ->
-            Process.send_after(self(), :tick_snapshot, @snapshot_after)
-            Process.send_after(self(), :tick_catch_up, @catch_up_after)
-            {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :catch_up,
+            :start
+          ],
+          %{},
+          %{module: __MODULE__, streams: streams}
+        )
 
-          {:error, reason} ->
-            {:stop, reason, %{s | snapshot: nil}}
-        end
+        result =
+          case catch_up(streams, ss, strict: false) do
+            {:ok, new_ss, count} ->
+              Process.send_after(self(), :tick_snapshot, @snapshot_after)
+              Process.send_after(self(), :tick_catch_up, @catch_up_after)
+              {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+
+            {:error, reason} ->
+              {:stop, reason, %{s | snapshot: nil}}
+          end
+
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :catch_up,
+            :stop
+          ],
+          %{},
+          %{module: __MODULE__, streams: streams}
+        )
+
+        result
       end
 
       @impl true
@@ -233,12 +266,25 @@ defmodule Hume.Projection do
       end
 
       def handle_info(:tick_snapshot, %{projection: proj, snapshot: snapshot} = s) do
-        case :timer.tc(fn -> persist_snapshot(proj, snapshot) end, :millisecond) do
-          {take_snap_ms, :ok} ->
+        {take_snap_ms, snap_result} =
+          :timer.tc(fn -> persist_snapshot(proj, snapshot) end, :millisecond)
+
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :snapshot
+          ],
+          %{duration: take_snap_ms},
+          %{module: __MODULE__, projection: proj, snapshot: snapshot, result: snap_result}
+        )
+
+        case snap_result do
+          :ok ->
             Process.send_after(self(), :tick_snapshot, @snapshot_after)
             {:noreply, %{s | count: 0}}
 
-          {take_snap_ms, {:error, reason}} ->
+          {:error, reason} ->
             Logger.error("Failed to take snapshot: #{inspect(reason)}")
             Process.send_after(self(), :tick_snapshot, @snapshot_after)
             {:noreply, %{s | count: 0}}
@@ -262,7 +308,20 @@ defmodule Hume.Projection do
       end
 
       def handle_call(:take_snapshot, _from, %{projection: proj, snapshot: snapshot} = s) do
-        case persist_snapshot(proj, snapshot) do
+        snap_result = persist_snapshot(proj, snapshot)
+
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :snapshot,
+            :manual
+          ],
+          %{},
+          %{module: __MODULE__, projection: proj, snapshot: snapshot, result: snap_result}
+        )
+
+        case snap_result do
           :ok ->
             {:reply, :ok, %{s | count: 0}}
 
@@ -272,13 +331,40 @@ defmodule Hume.Projection do
       end
 
       def handle_call(:catch_up, _from, %{streams: streams, snapshot: ss} = s) do
-        case catch_up(streams, ss, strict: @strict_online) do
-          {:ok, new_ss, count} ->
-            {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :catch_up,
+            :manual,
+            :start
+          ],
+          %{},
+          %{module: __MODULE__, streams: streams}
+        )
 
-          {:error, reason} ->
-            {:stop, reason, %{s | snapshot: nil}}
-        end
+        result =
+          case catch_up(streams, ss, strict: @strict_online) do
+            {:ok, new_ss, count} ->
+              {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
+
+            {:error, reason} ->
+              {:stop, reason, %{s | snapshot: nil}}
+          end
+
+        :telemetry.execute(
+          [
+            :hume,
+            :projection,
+            :catch_up,
+            :manual,
+            :stop
+          ],
+          %{},
+          %{module: __MODULE__, streams: streams}
+        )
+
+        result
       end
 
       def store, do: @store
@@ -319,64 +405,26 @@ defmodule Hume.Projection do
   defp impl_default(opts) when is_list(opts) do
     if Keyword.get(opts, :use_ets, false) do
       impl_ets_default()
-    else
-      impl_default()
     end
   end
 
   defp impl_ets_default() do
     quote location: :keep do
-      defp maybe_init_ets(%{projection: proj, use_heir: heir?}) do
-        mode =
-          if heir? do
-            :heir
-          else
-            :new
-          end
-
-        prepare_ets(String.to_atom(proj), mode)
-      end
-
-      defp prepare_ets(name, :heir) do
-        case Heir.request_take(name, self()) do
-          {:ok, tid} ->
-            tid
-
-          {:error, :not_found} ->
-            :ets.new(name, [
-              :named_table,
-              {:heir, Process.whereis(Heir), name}
-            ])
-        end
-      end
-
-      defp prepare_ets(name, :new) do
-        :ets.new(name, [:named_table])
-      end
+      @hume_snapshot_table Hume.Projection.ETSOwner.table()
 
       @impl true
       def last_snapshot(proj) do
-        case :ets.lookup(String.to_existing_atom(proj), :snapshot) do
-          [{:snapshot, snapshot}] -> snapshot
-          [] -> nil
+        case :ets.lookup(@hume_snapshot_table, {proj, :snapshot}) do
+          [{{^proj, :snapshot}, snapshot}] -> snapshot
+          _ -> nil
         end
       end
 
       @impl true
       def persist_snapshot(proj, snapshot) do
-        true = :ets.insert(String.to_existing_atom(proj), {:snapshot, snapshot})
+        true = :ets.insert(@hume_snapshot_table, {{proj, :snapshot}, snapshot})
         :ok
       end
-
-      def handle_info({:"ETS-TRANSFER", _, _, _}, s) do
-        {:noreply, s}
-      end
-    end
-  end
-
-  defp impl_default() do
-    quote location: :keep do
-      defp maybe_init_ets(_), do: :ok
     end
   end
 
@@ -403,7 +451,21 @@ defmodule Hume.Projection do
   @spec evolve(mod :: module(), event(), snapshot()) ::
           {:ok, snapshot()} | {:error, term()}
   def evolve(mod, event, snapshot, opts \\ []) do
-    do_evolve(mod, event, snapshot, opts)
+    start = System.monotonic_time()
+    result = do_evolve(mod, event, snapshot, opts)
+    stop = System.monotonic_time()
+
+    :telemetry.execute(
+      [
+        :hume,
+        :projection,
+        :evolve
+      ],
+      %{duration: stop - start},
+      %{module: mod, event: event, snapshot: snapshot, result: result}
+    )
+
+    result
   end
 
   defp do_evolve(_, {next, _}, {seq, _}, _) when next <= seq do
@@ -443,18 +505,34 @@ defmodule Hume.Projection do
           {:ok, snapshot()} | {:error, term()}
   def replay(mod, snapshot, {:ordered, events}, opts \\ []) do
     strict = Keyword.get(opts, :strict, true)
+    start = System.monotonic_time()
 
-    events
-    |> Enum.reduce_while(snapshot, fn event, ss ->
-      case evolve(mod, event, ss, strict: strict) do
-        {:ok, new_ss} -> {:cont, new_ss}
-        {:error, reason} -> {:halt, {:error, reason}}
+    result =
+      events
+      |> Enum.reduce_while(snapshot, fn event, ss ->
+        case evolve(mod, event, ss, strict: strict) do
+          {:ok, new_ss} -> {:cont, new_ss}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+      |> case do
+        {:error, reason} -> {:error, reason}
+        ok -> {:ok, ok}
       end
-    end)
-    |> case do
-      {:error, reason} -> {:error, reason}
-      ok -> {:ok, ok}
-    end
+
+    stop = System.monotonic_time()
+
+    :telemetry.execute(
+      [
+        :hume,
+        :projection,
+        :replay
+      ],
+      %{duration: stop - start},
+      %{module: mod, events_count: length(events), result: result}
+    )
+
+    result
   end
 
   @doc """
