@@ -147,11 +147,6 @@ defmodule Hume.Projection do
       raise ArgumentError, "Invalid options for Hume.Projection: #{inspect(invalid_opts)}"
     end
 
-    case Hume.EventStore.validate(opts[:store]) do
-      :ok -> :ok
-      {:error, reason} -> raise ArgumentError, "Invalid event store module: #{inspect(reason)}"
-    end
-
     :ok
   end
 
