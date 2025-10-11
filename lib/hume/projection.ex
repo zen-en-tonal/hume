@@ -122,6 +122,18 @@ defmodule Hume.Projection do
   """
   @callback persist_snapshot(projection(), snapshot()) :: :ok | {:error, term()}
 
+  @doc """
+  Callback invoked when the projection has caught up with the event store.
+
+  This can be used to perform any actions needed after catching up, such as
+  notifying other parts of the system or updating internal state.
+  ## Parameters
+    - snapshot: The current snapshot of the projection after catching up.
+  ## Returns
+    - `:ok`
+  """
+  @callback on_caught_up(snapshot()) :: :ok
+
   @spec __using__(opts :: [macro_option()]) :: Macro.t()
   defmacro __using__(opts) do
     quote do
@@ -233,6 +245,7 @@ defmodule Hume.Projection do
             {:ok, new_ss, count} ->
               Process.send_after(self(), :tick_snapshot, @snapshot_after)
               Process.send_after(self(), :tick_catch_up, @catch_up_after)
+              GenServer.cast(self(), :on_caught_up)
               {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
 
             {:error, reason} ->
@@ -257,6 +270,7 @@ defmodule Hume.Projection do
       def handle_info({:hint, stream, _last_seq}, %{snapshot: ss} = s) do
         case catch_up(stream |> List.wrap(), ss, strict: @strict_online) do
           {:ok, {seq, state}, count} ->
+            GenServer.cast(self(), :on_caught_up)
             {:noreply, %{s | snapshot: {seq, state}, count: s.count + count}}
 
           {:error, reason} ->
@@ -300,6 +314,7 @@ defmodule Hume.Projection do
         case catch_up(streams, ss, strict: @strict_online) do
           {:ok, new_ss, count} ->
             Process.send_after(self(), :tick_catch_up, @catch_up_after)
+            GenServer.cast(self(), :on_caught_up)
             {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
 
           {:error, reason} ->
@@ -351,6 +366,7 @@ defmodule Hume.Projection do
         result =
           case catch_up(streams, ss, strict: @strict_online) do
             {:ok, new_ss, count} ->
+              GenServer.cast(self(), :on_caught_up)
               {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
 
             {:error, reason} ->
@@ -371,6 +387,22 @@ defmodule Hume.Projection do
 
         result
       end
+
+      @impl true
+      def handle_cast(:on_caught_up, %{projection: proj, snapshot: snapshot} = s) do
+        :telemetry.execute(
+          [:hume, :projection, :on_caught_up],
+          %{},
+          %{module: __MODULE__, projection: proj, snapshot: snapshot}
+        )
+
+        on_caught_up(snapshot)
+
+        {:noreply, s}
+      end
+
+      @impl true
+      def on_caught_up(_snapshot), do: :ok
 
       def store, do: @store
 
@@ -404,6 +436,8 @@ defmodule Hume.Projection do
       end
 
       @before_compile {Hume.Projection, :add_handle_event_fallback}
+
+      defoverridable on_caught_up: 1
     end
   end
 
