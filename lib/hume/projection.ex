@@ -89,6 +89,18 @@ defmodule Hume.Projection do
   @callback init_state(projection()) :: state()
 
   @doc """
+  Callback invoked when the projection process is initialized.
+  This is optional and can be used to perform any setup required.
+
+  ## Parameters
+    - projection: The projection module.
+
+  ## Returns
+    - `:ok`
+  """
+  @callback on_init(projection()) :: :ok
+
+  @doc """
   Handles an event and updates the state accordingly.
 
   ## Parameters
@@ -133,6 +145,8 @@ defmodule Hume.Projection do
     - `:ok`
   """
   @callback on_caught_up(snapshot()) :: :ok
+
+  @optional_callbacks on_init: 1, on_caught_up: 1
 
   @spec __using__(opts :: [macro_option()]) :: Macro.t()
   defmacro __using__(opts) do
@@ -208,6 +222,8 @@ defmodule Hume.Projection do
           |> Map.put(:count, 0)
           |> Map.put(:snapshot, nil)
 
+        on_init(opts.projection)
+
         :telemetry.execute(
           [
             :hume,
@@ -220,6 +236,9 @@ defmodule Hume.Projection do
 
         {:ok, state, {:continue, :catch_up}}
       end
+
+      @impl true
+      def on_init(_projection), do: :ok
 
       @impl true
       def handle_continue(:catch_up, %{streams: streams, projection: proj} = s) do
@@ -437,7 +456,7 @@ defmodule Hume.Projection do
 
       @before_compile {Hume.Projection, :add_handle_event_fallback}
 
-      defoverridable on_caught_up: 1
+      defoverridable on_caught_up: 1, on_init: 1
     end
   end
 
