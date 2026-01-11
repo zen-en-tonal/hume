@@ -59,13 +59,13 @@ defmodule HumeTest do
       assert {:ok, pid1} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name
+                 name: name
                )
 
       assert {:error, {:already_started, ^pid1}} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name
+                 name: name
                )
     end
 
@@ -75,15 +75,13 @@ defmodule HumeTest do
       assert {:ok, pid1} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name,
-                 registry: :global
+                 name: {:global, name}
                )
 
       assert {:error, {:already_started, ^pid1}} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name,
-                 registry: :global
+                 name: {:global, name}
                )
 
       assert ^pid1 = :global.whereis_name(name)
@@ -98,15 +96,13 @@ defmodule HumeTest do
       assert {:ok, pid1} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name,
-                 registry: {Registry, registry}
+                 name: {:via, Registry, {registry, name}}
                )
 
       assert {:error, {:already_started, ^pid1}} =
                Hume.start_link(MyProjection,
                  stream: unique_name(),
-                 projection: name,
-                 registry: {Registry, registry}
+                 name: {:via, Registry, {registry, name}}
                )
 
       assert [{^pid1, _}] = Registry.lookup(registry, name)

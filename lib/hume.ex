@@ -40,12 +40,12 @@ defmodule Hume do
       end
 
       Hume.EventStore.ETS.start_link([])
-      Hume.start_link(MyProjection, stream: MyStream, projection: MyProjection)
+      {:ok, pid} = Hume.start_link(MyProjection, stream: MyStream, projection: MyProjection)
 
       {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:add, :foo, 42})
-      %{foo: 42} = Hume.state(MyProjection)
+      %{foo: 42} = Hume.state(pid)
       {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:remove, :foo})
-      %{} = Hume.state(MyProjection)
+      %{} = Hume.state(pid)
 
   """
 
@@ -54,8 +54,7 @@ defmodule Hume do
 
   ## Options
     - `:stream` - The stream identifier (required).
-    - `:projection` - The unique name for the projection (required). GenServer name will be set to this value.
-    - `:registry` - The registry module for process registration (default :local). Can be `:local`, `:global`, or `{module, name}` for custom registries.
+    - `:projection` - The unique name for the projection (optional). 
 
   ## Returns
     - `{:ok, pid}` if the process starts successfully.

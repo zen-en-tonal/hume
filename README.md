@@ -33,12 +33,12 @@ defmodule MyProjection do
 end
 
 Hume.EventStore.ETS.start_link([])
-Hume.start_link(MyProjection, stream: MyStream, projection: MyProjection)
+{:ok, pid} = Hume.start_link(MyProjection, stream: MyStream)
 
 {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:add, :foo, 42})
-%{foo: 42} = Hume.state(MyProjection)
+%{foo: 42} = Hume.state(pid)
 {:ok, _} = Hume.publish(Hume.EventStore.ETS, MyStream, {:remove, :foo})
-%{} = Hume.state(MyProjection)
+%{} = Hume.state(pid)
 ```
 
 ## Installation

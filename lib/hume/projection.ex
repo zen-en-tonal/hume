@@ -67,7 +67,6 @@ defmodule Hume.Projection do
           GenServer.option()
           | {:stream, stream() | [stream()]}
           | {:projection, projection()}
-          | {:registry, :local | :global | {registry :: module(), name :: term()}}
 
   @type macro_option() ::
           {:use_ets, boolean()}
@@ -81,7 +80,7 @@ defmodule Hume.Projection do
   Initial state of the machine.
 
   ## Parameters
-    - name: The name or identifier of the machine.
+    - projection: The name or identifier of the machine.
 
   ## Returns
     - The initial state of the machine.
@@ -93,7 +92,7 @@ defmodule Hume.Projection do
   This is optional and can be used to perform any setup required.
 
   ## Parameters
-    - projection: The projection module.
+    - projection: The name or identifier of the machine.
 
   ## Returns
     - `:ok`
@@ -663,8 +662,8 @@ defmodule Hume.Projection do
           | {:error, term()}
   def parse_options(opts) do
     with {:ok, {map, rest}} <- do_parse_options(opts, %{}, []),
-         {:ok, map} <- validate_options(map),
-         {:ok, map} <- put_optional(map) do
+         {:ok, map} <- put_optional(map),
+         {:ok, map} <- validate_options(map) do
       {:ok, {map, rest}}
     end
   end
@@ -673,17 +672,8 @@ defmodule Hume.Projection do
     do_parse_options(tail, Map.put(map, :streams, List.wrap(stream)), rest)
   end
 
-  defp do_parse_options([{:projection, proj} | tail], map, rest)
-       when is_atom(proj) do
+  defp do_parse_options([{:projection, proj} | tail], map, rest) do
     do_parse_options(tail, Map.put(map, :projection, proj), rest)
-  end
-
-  defp do_parse_options([{:registry, registry} | tail], map, rest) do
-    do_parse_options(tail, Map.put(map, :registry, registry), rest)
-  end
-
-  defp do_parse_options([{:name, name} | tail], map, rest) do
-    do_parse_options(tail, Map.put(map, :name, name), rest)
   end
 
   defp do_parse_options([h | t], map, rest) do
@@ -697,22 +687,10 @@ defmodule Hume.Projection do
   defp put_optional(map) do
     opts =
       map
-      |> Map.put_new(:registry, :local)
-      |> Map.put(:name, map.projection)
+      |> Map.put_new(:projection, __MODULE__)
 
-    gs_name = via_name(opts.registry, opts.projection)
-
-    {:ok, Map.put(opts, :genserver_name, gs_name)}
+    {:ok, opts}
   end
-
-  defp via_name(:global, name),
-    do: {:global, name}
-
-  defp via_name({registry_mod, registry_name}, name),
-    do: {:via, registry_mod, {registry_name, name}}
-
-  defp via_name(:local, name),
-    do: name
 
   defp validate_options(map) do
     cond do
@@ -774,7 +752,7 @@ defmodule Hume.Projection do
   def start_link(mod, opts) do
     with :ok <- validate(mod),
          {:ok, {opts, rest}} <- parse_options(opts) do
-      GenServer.start_link(mod, opts, Keyword.put(rest, :name, opts.genserver_name))
+      GenServer.start_link(mod, opts, rest)
     end
   end
 
@@ -782,7 +760,7 @@ defmodule Hume.Projection do
   def start(mod, opts) do
     with :ok <- validate(mod),
          {:ok, {opts, rest}} <- parse_options(opts) do
-      GenServer.start(mod, opts, Keyword.put(rest, :name, opts.genserver_name))
+      GenServer.start(mod, opts, rest)
     end
   end
 end
