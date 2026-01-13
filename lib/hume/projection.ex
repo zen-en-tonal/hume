@@ -43,6 +43,19 @@ defmodule Hume.Projection do
         def handle_event({:remove, key}, state),
           do: {:ok, Map.delete(state || %{}, key)}
       end
+
+  ## Telemetry
+  This module emits telemetry events for various operations, including:
+    - `[:hume, :projection, :init]`
+    - `[:hume, :projection, :catch_up, :start]`
+    - `[:hume, :projection, :catch_up, :stop]`
+    - `[:hume, :projection, :snapshot]`
+    - `[:hume, :projection, :evolve]`
+    - `[:hume, :projection, :replay]`
+    - `[:hume, :projection, :on_caught_up]`
+
+  ## Shutdown
+  On `:normal` termination, the projection will automatically persist its current snapshot.
   """
 
   alias Hume.{Bus, EventOrder}
@@ -51,7 +64,7 @@ defmodule Hume.Projection do
 
   @type stream :: term()
 
-  @type projection :: atom()
+  @type projection :: term()
 
   @type state :: term()
 
@@ -417,6 +430,16 @@ defmodule Hume.Projection do
         on_caught_up(snapshot)
 
         {:noreply, s}
+      end
+
+      @impl true
+      def terminate(:normal, %{projection: proj, snapshot: snapshot} = s) do
+        persist_snapshot(proj, snapshot)
+        :ok
+      end
+
+      def terminate(_, _) do
+        :ok
       end
 
       @impl true
