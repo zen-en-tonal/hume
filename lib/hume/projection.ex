@@ -341,8 +341,8 @@ defmodule Hume.Projection do
         end
       end
 
-      def handle_info(:tick_catch_up, %{streams: streams, snapshot: ss} = s) do
-        case catch_up(streams, ss, strict: @strict_online) do
+      def handle_info(:tick_catch_up, %{stream: stream, snapshot: ss} = s) do
+        case catch_up(stream, ss, strict: @strict_online) do
           {:ok, new_ss, count} ->
             Process.send_after(self(), :tick_catch_up, @catch_up_after)
             GenServer.cast(self(), :on_caught_up)
@@ -381,7 +381,7 @@ defmodule Hume.Projection do
         end
       end
 
-      def handle_call(:catch_up, _from, %{streams: streams, snapshot: ss} = s) do
+      def handle_call(:catch_up, _from, %{stream: stream, snapshot: ss} = s) do
         :telemetry.execute(
           [
             :hume,
@@ -391,11 +391,11 @@ defmodule Hume.Projection do
             :start
           ],
           %{},
-          %{module: __MODULE__, streams: streams}
+          %{module: __MODULE__, stream: stream}
         )
 
         result =
-          case catch_up(streams, ss, strict: @strict_online) do
+          case catch_up(stream, ss, strict: @strict_online) do
             {:ok, new_ss, count} ->
               GenServer.cast(self(), :on_caught_up)
               {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
@@ -413,7 +413,7 @@ defmodule Hume.Projection do
             :stop
           ],
           %{},
-          %{module: __MODULE__, streams: streams}
+          %{module: __MODULE__, stream: stream}
         )
 
         result
