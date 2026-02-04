@@ -1,7 +1,7 @@
 defmodule Hume.Publisher do
   @moduledoc false
 
-  alias Hume.{EventStore, EventOrder}
+  alias Hume.EventStore
 
   @spec publish(event_store :: module(), EventStore.stream(), [EventStore.payload()]) ::
           {:ok, [EventStore.event()]} | {:error, term()}
@@ -11,7 +11,7 @@ defmodule Hume.Publisher do
 
   def publish(event_store, stream, payloads) when is_list(payloads) do
     events = EventStore.number(event_store, payloads)
-    last_event = events |> EventOrder.to_list() |> List.last()
+    last_event = events |> Enum.max_by(fn {seq, _payload} -> seq end)
 
     with :ok <- EventStore.append(event_store, stream, events),
          :ok <- Hume.Bus.notify(event_store, stream, last_event |> elem(0)) do

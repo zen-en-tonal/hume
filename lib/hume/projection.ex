@@ -58,7 +58,7 @@ defmodule Hume.Projection do
   On `:normal` termination, the projection will automatically persist its current snapshot.
   """
 
-  alias Hume.{Bus, EventOrder}
+  alias Hume.Bus
 
   require Logger
 
@@ -226,8 +226,8 @@ defmodule Hume.Projection do
       end
 
       @impl true
-      def init(%{streams: streams} = opts) do
-        for stream <- streams, do: Bus.subscribe(@store, stream)
+      def init(%{stream: stream} = opts) do
+        Bus.subscribe(@store, stream)
 
         state =
           opts
@@ -253,7 +253,7 @@ defmodule Hume.Projection do
       def on_init(_projection), do: :ok
 
       @impl true
-      def handle_continue(:catch_up, %{streams: streams, projection: proj} = s) do
+      def handle_continue(:catch_up, %{stream: stream, projection: proj} = s) do
         {last_snapshot_ms, ss} =
           :timer.tc(
             fn -> last_snapshot(proj) || {0, init_state(proj)} end,
@@ -268,11 +268,11 @@ defmodule Hume.Projection do
             :start
           ],
           %{},
-          %{module: __MODULE__, streams: streams}
+          %{module: __MODULE__, stream: stream}
         )
 
         result =
-          case catch_up(streams, ss, strict: false) do
+          case catch_up(stream, ss, strict: false) do
             {:ok, new_ss, count} ->
               Process.send_after(self(), :tick_snapshot, @snapshot_after)
               Process.send_after(self(), :tick_catch_up, @catch_up_after)
@@ -291,7 +291,7 @@ defmodule Hume.Projection do
             :stop
           ],
           %{},
-          %{module: __MODULE__, streams: streams}
+          %{module: __MODULE__, stream: stream}
         )
 
         result
@@ -299,7 +299,7 @@ defmodule Hume.Projection do
 
       @impl true
       def handle_info({:hint, stream, _last_seq}, %{snapshot: ss} = s) do
-        case catch_up(stream |> List.wrap(), ss, strict: @strict_online) do
+        case catch_up(stream, ss, strict: @strict_online) do
           {:ok, {seq, state}, count} ->
             GenServer.cast(self(), :on_caught_up)
             {:noreply, %{s | snapshot: {seq, state}, count: s.count + count}}
@@ -447,19 +447,12 @@ defmodule Hume.Projection do
 
       def store, do: @store
 
-      defp events(streams, from) do
-        streams
-        |> Enum.reduce(EventOrder.ensure_ordered([]), fn stream, acc ->
-          EventOrder.merge_ordered(acc, @store.events(stream, from))
-        end)
-      end
-
-      defp catch_up(streams, {since, state} = last_snapshot, opts) do
+      defp catch_up(stream, {since, state} = last_snapshot, opts) do
         strict = Keyword.get(opts, :strict, true)
 
         {events_ms, events} =
           :timer.tc(
-            fn -> events(streams, since) end,
+            fn -> @store.events(stream, since) end,
             :millisecond
           )
 
@@ -468,8 +461,8 @@ defmodule Hume.Projection do
           :millisecond
         )
         |> case do
-          {replay_ms, {:ok, {seq, state}}} ->
-            {:ok, {seq, state}, events |> EventOrder.len()}
+          {replay_ms, {:ok, {seq, state}, count}} ->
+            {:ok, {seq, state}, count}
 
           {replay_ms, {:error, reason}} ->
             {:error, reason}
@@ -581,23 +574,23 @@ defmodule Hume.Projection do
     - `{:ok, snapshot}` if all events are replayed successfully.
     - `{:error, reason}` if an error occurs during event handling.
   """
-  @spec replay(mod :: module(), snapshot(), events :: EventOrder.ordered()) ::
-          {:ok, snapshot()} | {:error, term()}
-  def replay(mod, snapshot, {:ordered, events}, opts \\ []) do
+  @spec replay(mod :: module(), snapshot(), events :: Enumerable.t()) ::
+          {:ok, snapshot(), count :: pos_integer()} | {:error, term()}
+  def replay(mod, snapshot, events, opts \\ []) do
     strict = Keyword.get(opts, :strict, true)
     start = System.monotonic_time()
 
     result =
       events
-      |> Enum.reduce_while(snapshot, fn event, ss ->
+      |> Enum.reduce_while({snapshot, 0}, fn event, {ss, count} ->
         case evolve(mod, event, ss, strict: strict) do
-          {:ok, new_ss} -> {:cont, new_ss}
+          {:ok, new_ss} -> {:cont, {new_ss, count + 1}}
           {:error, reason} -> {:halt, {:error, reason}}
         end
       end)
       |> case do
         {:error, reason} -> {:error, reason}
-        ok -> {:ok, ok}
+        {ss, count} -> {:ok, ss, count}
       end
 
     stop = System.monotonic_time()
@@ -609,7 +602,7 @@ defmodule Hume.Projection do
         :replay
       ],
       %{duration: stop - start},
-      %{module: mod, events_count: length(events), result: result}
+      %{module: mod, result: result}
     )
 
     result
@@ -692,7 +685,7 @@ defmodule Hume.Projection do
   end
 
   defp do_parse_options([{:stream, stream} | tail], map, rest) do
-    do_parse_options(tail, Map.put(map, :streams, List.wrap(stream)), rest)
+    do_parse_options(tail, Map.put(map, :stream, stream), rest)
   end
 
   defp do_parse_options([{:projection, proj} | tail], map, rest) do
@@ -717,7 +710,7 @@ defmodule Hume.Projection do
 
   defp validate_options(map) do
     cond do
-      map[:streams] == nil ->
+      map[:stream] == nil ->
         {:error, :missing_stream}
 
       map[:projection] == nil ->

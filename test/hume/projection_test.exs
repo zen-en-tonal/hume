@@ -7,12 +7,11 @@ defmodule Hume.ProjectionTest do
     test "parses valid options correctly" do
       opts = [
         projection: :my_projection,
-        stream: [:stream1, :stream2],
+        stream: :stream1,
         extra: :value
       ]
 
-      assert {:ok,
-              {%{projection: :my_projection, streams: [:stream1, :stream2]}, [extra: :value]}} =
+      assert {:ok, {%{projection: :my_projection, stream: :stream1}, [extra: :value]}} =
                Projection.parse_options(opts)
     end
 

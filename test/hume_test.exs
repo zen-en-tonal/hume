@@ -20,6 +20,39 @@ defmodule HumeTest do
       do: {:ok, Map.delete(state || %{}, key)}
   end
 
+  defmodule MyStream do
+    @moduledoc false
+    @behaviour Hume.EventStore
+
+    @impl true
+    def next_sequence, do: System.unique_integer([:monotonic, :positive])
+
+    @impl true
+    def events(_stream, _from) do
+      Stream.resource(
+        fn -> 1 end,
+        fn
+          state when state > 10 -> {:halt, state}
+          state -> {[{state, {:add, state, state}}], state + 1}
+        end,
+        fn _ -> :ok end
+      )
+    end
+
+    @impl true
+    def append_batch(_stream, _list), do: :ok
+  end
+
+  defmodule MyStreamProjection do
+    @moduledoc false
+    use Hume.Projection, use_ets: true, store: MyStream
+    @impl true
+    def init_state(_), do: %{}
+    @impl true
+    def handle_event({:add, key, value}, state),
+      do: {:ok, Map.put(state || %{}, key, value)}
+  end
+
   doctest Hume
 
   describe "start_link/2" do
@@ -139,6 +172,30 @@ defmodule HumeTest do
       refute Enum.any?(Process.info(self(), :links) |> elem(1), fn link -> link == pid end)
     end
 
+    test "accepts stream event store" do
+      assert {:ok, pid} =
+               Hume.start(MyStreamProjection,
+                 stream: unique_name(),
+                 projection: unique_name()
+               )
+
+      assert is_pid(pid)
+      assert Process.alive?(pid)
+
+      assert Hume.Projection.state(pid) == %{
+               1 => 1,
+               2 => 2,
+               3 => 3,
+               4 => 4,
+               5 => 5,
+               6 => 6,
+               7 => 7,
+               8 => 8,
+               9 => 9,
+               10 => 10
+             }
+    end
+
     test "fails to start without linking with invalid module" do
       assert {:error, _} =
                Hume.start(:invalid_module, stream: unique_name(), projection: unique_name())
@@ -200,23 +257,6 @@ defmodule HumeTest do
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:remove, :foo})
       Process.sleep(100)
       assert Hume.Projection.state(pid) == %{}
-    end
-
-    test "multiple stream" do
-      name1 = unique_name()
-      name2 = unique_name()
-
-      {:ok, pid} =
-        Hume.start_link(MyProjection,
-          stream: [name1, name2],
-          use_heir: false,
-          projection: unique_name()
-        )
-
-      assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name1, {:add, :foo, 42})
-      assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name2, {:add, :bar, 84})
-      Process.sleep(100)
-      assert Hume.state(pid) == %{foo: 42, bar: 84}
     end
 
     test "publishes an empty list of events" do

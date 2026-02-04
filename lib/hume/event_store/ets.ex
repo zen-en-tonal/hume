@@ -7,8 +7,6 @@ defmodule Hume.EventStore.ETS do
 
   @behaviour Hume.EventStore
 
-  alias Hume.EventOrder
-
   def start_link(_) do
     :ets.new(__MODULE__, [:named_table, :ordered_set, :public])
     :ets.insert(__MODULE__, {:seq, 0})
@@ -38,13 +36,12 @@ defmodule Hume.EventStore.ETS do
     ]
 
     :ets.select(__MODULE__, pattern)
-    |> EventOrder.ensure_ordered()
+    |> Enum.sort_by(fn {seq, _payload} -> seq end)
   end
 
   @impl true
   def append_batch(stream, list) do
     list
-    |> EventOrder.to_list()
     |> Enum.each(fn {seq, _payload} = event ->
       :ets.insert(__MODULE__, {{stream, seq}, event})
     end)

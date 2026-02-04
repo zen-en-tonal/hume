@@ -25,14 +25,14 @@ defmodule Hume.EventStore do
 
   The events must be strictly ordered by sequence number.
   """
-  @callback append_batch(stream(), Hume.EventOrder.ordered()) :: :ok | {:error, term()}
+  @callback append_batch(stream(), Enumerable.t(event())) :: :ok | {:error, term()}
 
   @doc """
   Get all events from the stream starting from the given sequence number (exclusive).
 
   The events are returned in strictly ascending order by sequence number.
   """
-  @callback events(stream(), from :: seq()) :: Hume.EventOrder.ordered()
+  @callback events(stream(), from :: seq()) :: Enumerable.t(event())
 
   @doc """
   Appends a single event or a batch of ordered events to the given stream.
@@ -42,13 +42,13 @@ defmodule Hume.EventStore do
 
   Ensures the events are appended in order.
   """
-  @spec append(module(), stream(), event() | Hume.EventOrder.ordered()) ::
+  @spec append(module(), stream(), event() | Enumerable.t(event())) ::
           :ok | {:error, term()}
   def append(mod, stream, {seq, _payload} = event) when is_integer(seq) do
-    mod.append_batch(stream, [event] |> Hume.EventOrder.ensure_ordered())
+    mod.append_batch(stream, [event])
   end
 
-  def append(mod, stream, {:ordered, events}) when is_list(events) do
+  def append(mod, stream, events) do
     mod.append_batch(stream, events)
   end
 
@@ -60,11 +60,10 @@ defmodule Hume.EventStore do
 
   Ensures the events are assigned in order.
   """
-  @spec number(module(), [payload()]) :: Hume.EventOrder.ordered()
+  @spec number(module(), Enumerable.t(event())) :: Enumerable.t(event())
   def number(mod, payloads) when is_list(payloads) do
     payloads
-    |> Enum.map(fn payload -> number(mod, payload) end)
-    |> Hume.EventOrder.ensure_ordered()
+    |> Stream.map(fn payload -> number(mod, payload) end)
   end
 
   @spec number(module(), payload()) :: event()
