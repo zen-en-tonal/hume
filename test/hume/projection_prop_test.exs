@@ -62,6 +62,10 @@ defmodule Hume.Projection.PropTest do
           Enum.reduce(payloads, %{}, fn e, m -> kvs_apply(m, e) end)
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, payloads)
+        :timer.sleep(10)
+
+        Hume.Projection.catch_up(pid)
+        :timer.sleep(10)
 
         final_state = Hume.Projection.state(pid)
 
@@ -86,10 +90,14 @@ defmodule Hume.Projection.PropTest do
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, left)
         assert {:ok, _} = Hume.publish(SUT.store(), name, right)
+        :timer.sleep(10)
 
         expected =
           (left ++ right)
           |> Enum.reduce(%{}, fn e, m -> kvs_apply(m, e) end)
+
+        Hume.Projection.catch_up(pid)
+        :timer.sleep(10)
 
         final_state = Hume.Projection.state(pid)
 
@@ -125,10 +133,14 @@ defmodule Hume.Projection.PropTest do
           )
 
         assert {:ok, _} = Hume.publish(SUT.store(), name, then)
+        :timer.sleep(10)
 
         expected =
           (first ++ then)
           |> Enum.reduce(%{}, fn e, m -> kvs_apply(m, e) end)
+
+        Hume.Projection.catch_up(pid)
+        :timer.sleep(10)
 
         final_state = Hume.Projection.state(pid)
 
