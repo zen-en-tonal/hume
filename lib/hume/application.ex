@@ -8,7 +8,8 @@ defmodule Hume.Application do
     children = [
       {Phoenix.PubSub, name: Hume.Bus},
       Hume.Heir,
-      Hume.Projection.ETSOwner
+      Hume.Projection.ETSOwner,
+      {Task.Supervisor, name: Hume.TaskSupervisor}
     ]
 
     opts = [strategy: :one_for_one, name: Hume.Supervisor]

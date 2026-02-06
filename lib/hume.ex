@@ -108,8 +108,8 @@ defmodule Hume do
   @doc """
   See `Hume.Projection.state/2`.
   """
-  @spec state(GenServer.server(), timeout()) :: Hume.Projection.state()
-  def state(server, timeout \\ 5_000) do
-    Hume.Projection.state(server, timeout)
+  @spec state(GenServer.server(), [{:timeout, timeout()} | :dirty]) :: Hume.Projection.state()
+  def state(server, opts \\ []) do
+    Hume.Projection.state(server, opts)
   end
 end

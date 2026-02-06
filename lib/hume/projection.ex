@@ -59,6 +59,7 @@ defmodule Hume.Projection do
   """
 
   alias Hume.Bus
+  alias Hume.TaskSupervisor
 
   require Logger
 
@@ -231,8 +232,11 @@ defmodule Hume.Projection do
 
         state =
           opts
-          |> Map.put(:count, 0)
-          |> Map.put(:snapshot, nil)
+          |> put_in([:count], 0)
+          |> put_in([:snapshot], nil)
+          |> put_in([:catch_up_task], nil)
+          |> put_in([:take_snapshot_task], nil)
+          |> put_in([:waiters], [])
 
         on_init(opts.projection)
 
@@ -246,177 +250,188 @@ defmodule Hume.Projection do
           %{module: __MODULE__, opts: opts}
         )
 
-        {:ok, state, {:continue, :catch_up}}
+        {:ok, state, {:continue, :warm_up}}
       end
 
       @impl true
       def on_init(_projection), do: :ok
 
       @impl true
-      def handle_continue(:catch_up, %{stream: stream, projection: proj} = s) do
+      def handle_continue(:warm_up, %{stream: stream, projection: proj} = s) do
         {last_snapshot_ms, ss} =
           :timer.tc(
             fn -> last_snapshot(proj) || {0, init_state(proj)} end,
             :millisecond
           )
 
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :catch_up,
-            :start
-          ],
-          %{},
-          %{module: __MODULE__, stream: stream}
-        )
+        Process.send_after(self(), :tick_snapshot, @snapshot_after)
 
-        result =
-          case catch_up(stream, ss, strict: false) do
-            {:ok, new_ss, count} ->
-              Process.send_after(self(), :tick_snapshot, @snapshot_after)
-              Process.send_after(self(), :tick_catch_up, @catch_up_after)
-              GenServer.cast(self(), :on_caught_up)
-              {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+        send(self(), :tick_catch_up)
 
-            {:error, reason} ->
-              {:stop, reason, %{s | snapshot: nil}}
-          end
-
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :catch_up,
-            :stop
-          ],
-          %{},
-          %{module: __MODULE__, stream: stream}
-        )
-
-        result
+        {:noreply, %{s | snapshot: ss}}
       end
 
       @impl true
-      def handle_info({:hint, stream, _last_seq}, %{snapshot: ss} = s) do
-        case catch_up(stream, ss, strict: @strict_online) do
-          {:ok, {seq, state}, count} ->
-            GenServer.cast(self(), :on_caught_up)
-            {:noreply, %{s | snapshot: {seq, state}, count: s.count + count}}
-
-          {:error, reason} ->
-            {:stop, reason, %{s | snapshot: nil}}
-        end
+      def handle_info({:hint, _stream, _last_seq}, s) do
+        send(self(), :tick_catch_up)
+        {:noreply, s}
       end
 
-      def handle_info(:tick_snapshot, %{count: count} = s)
+      # take snapshot if enough events have been processed
+      def handle_info(
+            :tick_snapshot,
+            %{count: count, take_snapshot_task: nil} = s
+          )
           when count < @snapshot_every do
+        task =
+          Task.Supervisor.async_nolink(TaskSupervisor, fn ->
+            {take_snap_ms, snap_result} =
+              :timer.tc(fn -> persist_snapshot(s.projection, s.snapshot) end, :millisecond)
+
+            :telemetry.execute(
+              [
+                :hume,
+                :projection,
+                :snapshot
+              ],
+              %{duration: take_snap_ms},
+              %{
+                module: __MODULE__,
+                projection: s.projection,
+                snapshot: s.snapshot,
+                result: snap_result
+              }
+            )
+
+            snap_result
+          end)
+
+        {:noreply, %{s | take_snapshot_task: task}}
+      end
+
+      # ignore if a snapshot task is already running
+      def handle_info(:tick_snapshot, s) do
         Process.send_after(self(), :tick_snapshot, @snapshot_after)
         {:noreply, s}
       end
 
-      def handle_info(:tick_snapshot, %{projection: proj, snapshot: snapshot} = s) do
-        {take_snap_ms, snap_result} =
-          :timer.tc(fn -> persist_snapshot(proj, snapshot) end, :millisecond)
+      # start catch-up task if none is running
+      def handle_info(
+            :tick_catch_up,
+            %{catch_up_task: nil} = s
+          ) do
+        task =
+          Task.Supervisor.async_nolink(TaskSupervisor, fn ->
+            :telemetry.execute(
+              [
+                :hume,
+                :projection,
+                :catch_up,
+                :start
+              ],
+              %{},
+              %{module: __MODULE__, stream: s.stream}
+            )
 
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :snapshot
-          ],
-          %{duration: take_snap_ms},
-          %{module: __MODULE__, projection: proj, snapshot: snapshot, result: snap_result}
-        )
+            result = do_catch_up(s.stream, s.snapshot, strict: @strict_online)
 
-        case snap_result do
-          :ok ->
-            Process.send_after(self(), :tick_snapshot, @snapshot_after)
-            {:noreply, %{s | count: 0}}
+            :telemetry.execute(
+              [
+                :hume,
+                :projection,
+                :catch_up,
+                :stop
+              ],
+              %{},
+              %{module: __MODULE__, stream: s.stream}
+            )
 
-          {:error, reason} ->
-            Logger.error("Failed to take snapshot: #{inspect(reason)}")
-            Process.send_after(self(), :tick_snapshot, @snapshot_after)
-            {:noreply, %{s | count: 0}}
-        end
+            result
+          end)
+
+        {:noreply, %{s | catch_up_task: task}}
       end
 
-      def handle_info(:tick_catch_up, %{stream: stream, snapshot: ss} = s) do
-        case catch_up(stream, ss, strict: @strict_online) do
-          {:ok, new_ss, count} ->
+      # ignore if a catch-up task is already running
+      def handle_info(:tick_catch_up, s) do
+        {:noreply, s}
+      end
+
+      # handle completion of catch-up task
+      def handle_info({ref, result}, %{catch_up_task: task} = s)
+          when ref == task.ref do
+        case result do
+          {:ok, ss, count} ->
             Process.send_after(self(), :tick_catch_up, @catch_up_after)
             GenServer.cast(self(), :on_caught_up)
-            {:noreply, %{s | snapshot: new_ss, count: s.count + count}}
+            for from <- s.waiters, do: GenServer.reply(from, ss)
+
+            {:noreply,
+             %{
+               s
+               | snapshot: ss,
+                 count: s.count + count,
+                 catch_up_task: nil,
+                 waiters: []
+             }}
 
           {:error, reason} ->
             {:stop, reason, %{s | snapshot: nil}}
         end
       end
 
-      @impl true
-      def handle_call(:snapshot, _from, %{snapshot: snapshot} = s) do
-        {:reply, snapshot, s}
-      end
-
-      def handle_call(:take_snapshot, _from, %{projection: proj, snapshot: snapshot} = s) do
-        snap_result = persist_snapshot(proj, snapshot)
-
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :snapshot,
-            :manual
-          ],
-          %{},
-          %{module: __MODULE__, projection: proj, snapshot: snapshot, result: snap_result}
-        )
-
-        case snap_result do
+      # handle completion of take-snapshot task
+      def handle_info({ref, result}, %{take_snapshot_task: task} = s)
+          when ref == task.ref do
+        case result do
           :ok ->
-            {:reply, :ok, %{s | count: 0}}
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            {:noreply, %{s | count: 0, take_snapshot_task: nil}}
 
           {:error, reason} ->
-            {:reply, {:error, reason}, s}
+            Logger.error("Failed to take snapshot: #{inspect(reason)}")
+            Process.send_after(self(), :tick_snapshot, @snapshot_after)
+            {:noreply, %{s | count: 0, take_snapshot_task: nil}}
         end
       end
 
-      def handle_call(:catch_up, _from, %{stream: stream, snapshot: ss} = s) do
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :catch_up,
-            :manual,
-            :start
-          ],
-          %{},
-          %{module: __MODULE__, stream: stream}
-        )
+      # ignore other messages from tasks
+      def handle_info({_ref, _result}, s) do
+        {:noreply, s}
+      end
 
-        result =
-          case catch_up(stream, ss, strict: @strict_online) do
-            {:ok, new_ss, count} ->
-              GenServer.cast(self(), :on_caught_up)
-              {:reply, :ok, %{s | snapshot: new_ss, count: s.count + count}}
+      # handle DOWN messages from tasks
+      def handle_info(
+            {:DOWN, ref, :process, _pid, _reason},
+            %{take_snapshot_task: task} = s
+          )
+          when ref == task.ref do
+        {:noreply, %{s | take_snapshot_task: nil}}
+      end
 
-            {:error, reason} ->
-              {:stop, reason, %{s | snapshot: nil}}
-          end
+      def handle_info(
+            {:DOWN, ref, :process, _pid, _reason},
+            %{catch_up_task: task} = s
+          )
+          when ref == task.ref do
+        {:noreply, %{s | catch_up_task: nil}}
+      end
 
-        :telemetry.execute(
-          [
-            :hume,
-            :projection,
-            :catch_up,
-            :manual,
-            :stop
-          ],
-          %{},
-          %{module: __MODULE__, stream: stream}
-        )
+      def handle_info({:DOWN, _ref, :process, _pid, _reason}, s) do
+        {:noreply, s}
+      end
 
-        result
+      @impl true
+      def handle_call({:snapshot, :dirty_read}, _from, s) do
+        {:reply, s.snapshot, s}
+      end
+
+      def handle_call(:snapshot, from, %{catch_up_task: task} = s) when task != nil do
+        {:noreply, %{s | waiters: [from | s.waiters]}}
+      end
+
+      def handle_call(:snapshot, _from, s) do
+        {:reply, s.snapshot, s}
       end
 
       @impl true
@@ -429,6 +444,16 @@ defmodule Hume.Projection do
 
         on_caught_up(snapshot)
 
+        {:noreply, s}
+      end
+
+      def handle_cast(:take_snapshot, s) do
+        send(self(), :tick_snapshot)
+        {:noreply, s}
+      end
+
+      def handle_cast(:catch_up, s) do
+        send(self(), :tick_catch_up)
         {:noreply, s}
       end
 
@@ -447,7 +472,7 @@ defmodule Hume.Projection do
 
       def store, do: @store
 
-      defp catch_up(stream, {since, state} = last_snapshot, opts) do
+      defp do_catch_up(stream, {since, state} = last_snapshot, opts) do
         strict = Keyword.get(opts, :strict, true)
 
         {events_ms, events} =
@@ -548,8 +573,7 @@ defmodule Hume.Projection do
   defp do_evolve(mod, {next, event}, {_seq, state}, opts) do
     strict = Keyword.get(opts, :strict, true)
 
-    apply(mod, :handle_event, [event, state])
-    |> case do
+    case apply(mod, :handle_event, [event, state]) do
       {:ok, new_state} ->
         {:ok, {next, new_state}}
 
@@ -613,16 +637,13 @@ defmodule Hume.Projection do
 
   ## Parameters
     - server: The PID or name of the state machine process.
-    - timeout: The maximum time to wait for a response (default is 5000 ms).
 
   ## Returns
-    - `:ok` if the snapshot was taken successfully.
-    - `{:error, reason}` if there was an error taking the snapshot.
+    - `:ok`: The snapshot request has been sent.
   """
-  @spec take_snapshot(GenServer.server(), timeout :: non_neg_integer()) ::
-          :ok | {:error, term()}
-  def take_snapshot(server, timeout \\ 5_000) do
-    GenServer.call(server, :take_snapshot, timeout)
+  @spec take_snapshot(GenServer.server()) :: :ok
+  def take_snapshot(server) do
+    GenServer.cast(server, :take_snapshot)
   end
 
   @doc """
@@ -630,16 +651,13 @@ defmodule Hume.Projection do
 
   ## Parameters
     - server: The PID or name of the state machine process.
-    - timeout: The maximum time to wait for a response (default is 5000 ms).
 
   ## Returns
-    - `:ok` if the catch-up was successful.
-    - `{:error, reason}` if there was an error during catch-up.
+    - `:ok` The catch-up request has been sent.
   """
-  @spec catch_up(GenServer.server(), timeout :: non_neg_integer()) ::
-          :ok | {:error, term()}
-  def catch_up(server, timeout \\ 5_000) do
-    GenServer.call(server, :catch_up, timeout)
+  @spec catch_up(GenServer.server()) :: :ok
+  def catch_up(server) do
+    GenServer.cast(server, :catch_up)
   end
 
   @doc """
@@ -647,13 +665,22 @@ defmodule Hume.Projection do
 
   ## Parameters
     - machine: The PID or name of the state machine process.
-    - timeout: The maximum time to wait for a response (default is 5000 ms).
+    - opts: Options for the call (default is an empty list).
+      - `:timeout`: The maximum time to wait for a response (default is 5000 ms).
+      - `:dirty`: If specified, allows a dirty read of the snapshot.
   ## Returns
     - `snapshot`: The current snapshot of the state machine.
   """
-  @spec snapshot(GenServer.server(), timeout()) :: Hume.Projection.snapshot()
-  def snapshot(machine, timeout \\ 5_000) do
-    GenServer.call(machine, :snapshot, timeout)
+  @spec snapshot(GenServer.server(), [{:timeout, timeout()} | :dirty]) ::
+          Hume.Projection.snapshot()
+  def snapshot(machine, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+    call_type = if :dirty in opts, do: :dirty_read, else: :snapshot
+
+    case call_type do
+      :dirty_read -> GenServer.call(machine, {:snapshot, :dirty_read}, timeout)
+      :snapshot -> GenServer.call(machine, :snapshot, timeout)
+    end
   end
 
   @doc """
@@ -661,15 +688,17 @@ defmodule Hume.Projection do
 
   ## Parameters
     - machine: The PID or name of the state machine process.
-    - timeout: The maximum time to wait for a response (default is 5000 ms).
+    - opts: Options for the call (default is an empty list).
+      - `:timeout`: The maximum time to wait for a response (default is 5000 ms).
+      - `:dirty`: If specified, allows a dirty read of the snapshot.
 
   ## Returns
     - `state`: The current state of the state machine.
   """
-  @spec state(GenServer.server(), timeout()) :: Hume.Projection.state()
-  def state(machine, timeout \\ 5_000) do
-    GenServer.call(machine, :snapshot, timeout)
-    |> elem(1)
+  @spec state(GenServer.server(), [{:timeout, timeout()} | :dirty]) :: Hume.Projection.state()
+  def state(machine, opts \\ []) do
+    {_offset, state} = snapshot(machine, opts)
+    state
   end
 
   @doc false
