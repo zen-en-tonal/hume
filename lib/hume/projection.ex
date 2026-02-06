@@ -282,7 +282,7 @@ defmodule Hume.Projection do
             :tick_snapshot,
             %{count: count, take_snapshot_task: nil} = s
           )
-          when count < @snapshot_every do
+          when count >= @snapshot_every do
         task =
           Task.Supervisor.async_nolink(TaskSupervisor, fn ->
             {take_snap_ms, snap_result} =
@@ -458,8 +458,17 @@ defmodule Hume.Projection do
       end
 
       @impl true
-      def terminate(:normal, %{projection: proj, snapshot: snapshot} = s) do
-        persist_snapshot(proj, snapshot)
+      def terminate(:normal, s) do
+        if s.take_snapshot_task != nil do
+          Task.shutdown(s.take_snapshot_task, :brutal_kill)
+        end
+
+        if s.catch_up_task != nil do
+          Task.await(s.catch_up_task, :infinity)
+        end
+
+        persist_snapshot(s.projection, s.snapshot)
+
         :ok
       end
 
