@@ -23,8 +23,7 @@ defmodule Hume.EventStore.ETS do
     }
   end
 
-  @impl true
-  def next_sequence do
+  defp next_sequence do
     :ets.update_counter(__MODULE__, :seq, {2, 1}, {:seq, 0})
   end
 
@@ -41,9 +40,12 @@ defmodule Hume.EventStore.ETS do
 
   @impl true
   def append_batch(stream, list) do
-    list
-    |> Enum.each(fn {seq, _payload} = event ->
-      :ets.insert(__MODULE__, {{stream, seq}, event})
-    end)
+    items = for payload <- list, do: {next_sequence(), payload}
+
+    for {seq, payload} <- items do
+      true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
+    end
+
+    {:ok, elem(List.last(items), 0)}
   end
 end
