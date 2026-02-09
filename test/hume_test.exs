@@ -25,9 +25,6 @@ defmodule HumeTest do
     @behaviour Hume.EventStore
 
     @impl true
-    def next_sequence, do: System.unique_integer([:monotonic, :positive])
-
-    @impl true
     def events(_stream, _from) do
       Stream.resource(
         fn -> 1 end,

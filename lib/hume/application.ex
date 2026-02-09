@@ -9,7 +9,8 @@ defmodule Hume.Application do
       {Phoenix.PubSub, name: Hume.Bus},
       Hume.Heir,
       Hume.Projection.ETSOwner,
-      {Task.Supervisor, name: Hume.TaskSupervisor}
+      {Task.Supervisor, name: Hume.TaskSupervisor},
+      Hume.QueueSupervisor
     ]
 
     opts = [strategy: :one_for_one, name: Hume.Supervisor]

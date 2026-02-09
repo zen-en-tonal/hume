@@ -13,19 +13,11 @@ defmodule Hume.EventStore do
   @type event :: {seq(), payload()}
 
   @doc """
-  Get the next sequence number.
-
-  This should return the next available sequence number.
-  0 if the stream is empty, otherwise the last sequence number + 1.
-  """
-  @callback next_sequence :: seq()
-
-  @doc """
   Append a batch of events to the stream.
 
   The events must be strictly ordered by sequence number.
   """
-  @callback append_batch(stream(), Enumerable.t(event())) :: :ok | {:error, term()}
+  @callback append_batch(stream(), Enumerable.t(payload())) :: {:ok, seq()} | {:error, term()}
 
   @doc """
   Get all events from the stream starting from the given sequence number (exclusive).
@@ -37,38 +29,12 @@ defmodule Hume.EventStore do
   @doc """
   Appends a single event or a batch of ordered events to the given stream.
 
-  - If given a single event `{seq, payload}`, it appends it as a batch of one event.
-  - If given an ordered list of events `{:ordered, [events]}`, it appends them as a batch.
-
   Ensures the events are appended in order.
   """
-  @spec append(module(), stream(), event() | Enumerable.t(event())) ::
-          :ok | {:error, term()}
-  def append(mod, stream, {seq, _payload} = event) when is_integer(seq) do
-    mod.append_batch(stream, [event])
-  end
-
-  def append(mod, stream, events) do
-    mod.append_batch(stream, events)
-  end
-
-  @doc """
-  Assigns sequence numbers to a single payload or a list of payloads for the given stream.
-
-  - If given a single payload, it returns a single event tuple `{seq, payload}`
-  - If given a list of payloads, it returns an ordered list of events `{:ordered, [events]}`
-
-  Ensures the events are assigned in order.
-  """
-  @spec number(module(), Enumerable.t(event())) :: Enumerable.t(event())
-  def number(mod, payloads) when is_list(payloads) do
-    payloads
-    |> Stream.map(fn payload -> number(mod, payload) end)
-  end
-
-  @spec number(module(), payload()) :: event()
-  def number(mod, payload) do
-    {mod.next_sequence(), payload}
+  @spec append(module(), stream(), payload() | Enumerable.t(payload())) ::
+          {:ok, seq()} | {:error, term()}
+  def append(mod, stream, payload) do
+    mod.append_batch(stream, List.wrap(payload))
   end
 
   @doc """
