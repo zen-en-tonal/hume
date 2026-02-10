@@ -434,6 +434,15 @@ defmodule Hume.Projection do
         {:reply, s.snapshot, s}
       end
 
+      def handle_call(:catch_up, from, %{catch_up_task: task} = s) when task != nil do
+        {:noreply, %{s | waiters: [from | s.waiters]}}
+      end
+
+      def handle_call(:catch_up, from, s) do
+        send(self(), :tick_catch_up)
+        {:noreply, %{s | waiters: [from | s.waiters]}}
+      end
+
       @impl true
       def handle_cast(:on_caught_up, %{projection: proj, snapshot: snapshot} = s) do
         :telemetry.execute(
@@ -472,7 +481,13 @@ defmodule Hume.Projection do
         :ok
       end
 
-      def terminate(_, _) do
+      def terminate(_, s) do
+        if s.take_snapshot_task != nil,
+          do: Task.shutdown(s.take_snapshot_task, :brutal_kill)
+
+        if s.catch_up_task != nil,
+          do: Task.shutdown(s.catch_up_task, :brutal_kill)
+
         :ok
       end
 
@@ -667,6 +682,20 @@ defmodule Hume.Projection do
   @spec catch_up(GenServer.server()) :: :ok
   def catch_up(server) do
     GenServer.cast(server, :catch_up)
+  end
+
+  @doc """
+  Synchronously requests the state machine to catch up by processing any new events.
+
+  ## Parameters
+    - `server`: The PID or name of the state machine process.
+    - `timeout`: The maximum time to wait for a response (default is 5000 ms).
+  ## Returns
+    - `snapshot`: The current snapshot of the state machine after catching up.
+  """
+  @spec catch_up_sync(GenServer.server(), timeout()) :: Hume.Projection.snapshot()
+  def catch_up_sync(server, timeout \\ 5_000) do
+    GenServer.call(server, :catch_up, timeout)
   end
 
   @doc """
