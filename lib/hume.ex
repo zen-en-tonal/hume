@@ -89,7 +89,7 @@ defmodule Hume do
   """
   @spec publish(
           event_store :: module(),
-          Hume.EventStore.stream(),
+          Hume.EventStore.stream() | [Hume.EventStore.stream()],
           [Hume.EventStore.payload()]
         ) :: {:ok, [Hume.EventStore.event()]} | {:error, term()}
   def publish(event_store, stream, payloads) when is_list(payloads) do
@@ -98,7 +98,7 @@ defmodule Hume do
 
   @spec publish(
           event_store :: module(),
-          Hume.EventStore.stream(),
+          Hume.EventStore.stream() | [Hume.EventStore.stream()],
           Hume.EventStore.payload()
         ) :: {:ok, Hume.EventStore.event()} | {:error, term()}
   def publish(event_store, stream, payload) do

@@ -120,7 +120,7 @@ defmodule Hume.Queue do
             result =
               with {:ok, last_sequence} <-
                      EventStore.append(state.event_store, state.stream, items),
-                   :ok <- Bus.notify(state.event_store, state.stream, last_sequence) do
+                   :ok <- bus_notify(state.event_store, state.stream, last_sequence) do
                 {:ok, last_sequence}
               end
 
@@ -129,5 +129,13 @@ defmodule Hume.Queue do
 
         %{state | flushing_task: task, queue: :queue.new(), now_flushing: state.queue}
     end
+  end
+
+  defp bus_notify(event_store, streams, last_sequence) do
+    for stream <- List.wrap(streams) do
+      :ok = Bus.notify(event_store, stream, last_sequence)
+    end
+
+    :ok
   end
 end

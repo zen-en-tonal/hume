@@ -6,12 +6,16 @@ defmodule Hume.Publisher do
 
   @spec publish(
           event_store :: module(),
-          EventStore.stream(),
+          [EventStore.stream()] | EventStore.stream(),
           [EventStore.payload()] | EventStore.payload()
         ) ::
           {:ok, non_neg_integer() | nil} | {:error, term()}
   def publish(_event_store, _stream, []) do
     {:ok, []}
+  end
+
+  def publish(_, stream, _) when stream in [[], nil] do
+    {:error, :invalid_stream}
   end
 
   def publish(event_store, stream, payloads) do
