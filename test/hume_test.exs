@@ -260,6 +260,11 @@ defmodule HumeTest do
       assert {:ok, []} = Hume.publish(Hume.EventStore.ETS, MyStream, [])
     end
 
+    test "publishes to an invalid stream" do
+      assert {:error, :invalid_stream} = Hume.publish(Hume.EventStore.ETS, nil, {:add, :foo, 42})
+      assert {:error, :invalid_stream} = Hume.publish(Hume.EventStore.ETS, [], {:add, :foo, 42})
+    end
+
     test "publishes to multiple streams and updates the state accordingly" do
       name1 = unique_name()
       name2 = unique_name()

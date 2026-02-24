@@ -14,6 +14,10 @@ defmodule Hume.Publisher do
     {:ok, []}
   end
 
+  def publish(_, stream, _) when stream in [[], nil] do
+    {:error, :invalid_stream}
+  end
+
   def publish(event_store, stream, payloads) do
     :ok = Queue.push({event_store, stream}, payloads)
     Queue.flush({event_store, stream})
