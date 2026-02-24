@@ -27,7 +27,10 @@ defmodule Hume.EventStore do
   @callback events(stream(), from :: seq()) :: Enumerable.t(event())
 
   @doc """
-  Appends a single event or a batch of ordered events to the given stream.
+  Appends a single event or a batch of ordered events to one or more streams.
+
+  `stream` may be a single stream identifier or a list of stream identifiers;
+  events will be appended to all specified streams simultaneously.
 
   Ensures the events are appended in order.
   """
