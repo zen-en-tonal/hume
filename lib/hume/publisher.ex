@@ -6,7 +6,7 @@ defmodule Hume.Publisher do
 
   @spec publish(
           event_store :: module(),
-          EventStore.stream(),
+          [EventStore.stream()] | EventStore.stream(),
           [EventStore.payload()] | EventStore.payload()
         ) ::
           {:ok, non_neg_integer() | nil} | {:error, term()}

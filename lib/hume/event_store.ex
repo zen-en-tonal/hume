@@ -17,7 +17,7 @@ defmodule Hume.EventStore do
 
   The events must be strictly ordered by sequence number.
   """
-  @callback append_batch(stream(), Enumerable.t(payload())) :: {:ok, seq()} | {:error, term()}
+  @callback append_batch([stream()], Enumerable.t(payload())) :: {:ok, seq()} | {:error, term()}
 
   @doc """
   Get all events from the stream starting from the given sequence number (exclusive).
@@ -31,10 +31,10 @@ defmodule Hume.EventStore do
 
   Ensures the events are appended in order.
   """
-  @spec append(module(), stream(), payload() | Enumerable.t(payload())) ::
+  @spec append(module(), stream() | [stream()], payload() | Enumerable.t(payload())) ::
           {:ok, seq()} | {:error, term()}
   def append(mod, stream, payload) do
-    mod.append_batch(stream, List.wrap(payload))
+    mod.append_batch(List.wrap(stream), List.wrap(payload))
   end
 
   @doc """

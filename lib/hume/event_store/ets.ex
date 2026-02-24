@@ -39,10 +39,10 @@ defmodule Hume.EventStore.ETS do
   end
 
   @impl true
-  def append_batch(stream, list) do
+  def append_batch(streams, list) do
     items = for payload <- list, do: {next_sequence(), payload}
 
-    for {seq, payload} <- items do
+    for {seq, payload} <- items, stream <- streams do
       true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
     end
 

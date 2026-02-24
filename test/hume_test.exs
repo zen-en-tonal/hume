@@ -259,6 +259,33 @@ defmodule HumeTest do
     test "publishes an empty list of events" do
       assert {:ok, []} = Hume.publish(Hume.EventStore.ETS, MyStream, [])
     end
+
+    test "publishes to multiple streams and updates the state accordingly" do
+      name1 = unique_name()
+      name2 = unique_name()
+
+      {:ok, pid1} =
+        Hume.start_link(MyProjection,
+          stream: name1,
+          use_heir: false,
+          projection: name1
+        )
+
+      {:ok, pid2} =
+        Hume.start_link(MyProjection,
+          stream: name2,
+          use_heir: false,
+          projection: name2
+        )
+
+      assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name1, {:add, :foo, 42})
+      assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name2, {:add, :bar, 84})
+      assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, [name1, name2], {:add, :baz, 168})
+      # Allow some time for the events to be processed
+      Process.sleep(100)
+      assert Hume.Projection.state(pid1) == %{foo: 42, baz: 168}
+      assert Hume.Projection.state(pid2) == %{bar: 84, baz: 168}
+    end
   end
 
   defp unique_name do
