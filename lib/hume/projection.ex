@@ -520,7 +520,7 @@ defmodule Hume.Projection do
 
       @before_compile {Hume.Projection, :add_handle_event_fallback}
 
-      defoverridable on_caught_up: 1, on_init: 1
+      defoverridable on_caught_up: 1, on_init: 1, child_spec: 1
     end
   end
 
