@@ -84,25 +84,16 @@ defmodule Hume do
     - payload: The event payload to be published.
 
   ## Returns
-    - `{:ok, event}` if the event is published successfully.
+    - `{:ok, seq}` if the event is published successfully.
     - `{:error, reason}` if there is an error during publishing.
   """
   @spec publish(
           event_store :: module(),
           Hume.EventStore.stream(),
-          [Hume.EventStore.payload()]
-        ) :: {:ok, [Hume.EventStore.event()]} | {:error, term()}
-  def publish(event_store, stream, payloads) when is_list(payloads) do
+          Hume.EventStore.payload() | [Hume.EventStore.payload()]
+        ) :: {:ok, non_neg_integer() | nil} | {:error, term()}
+  def publish(event_store, stream, payloads) do
     Hume.Publisher.publish(event_store, stream, payloads)
-  end
-
-  @spec publish(
-          event_store :: module(),
-          Hume.EventStore.stream(),
-          Hume.EventStore.payload()
-        ) :: {:ok, Hume.EventStore.event()} | {:error, term()}
-  def publish(event_store, stream, payload) do
-    Hume.Publisher.publish(event_store, stream, payload)
   end
 
   @doc """
