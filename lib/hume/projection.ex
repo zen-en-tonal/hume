@@ -494,6 +494,7 @@ defmodule Hume.Projection do
       @impl true
       def on_caught_up(_snapshot), do: :ok
 
+      @doc false
       def store, do: @store
 
       defp do_catch_up(stream, {since, state} = last_snapshot, opts) do
