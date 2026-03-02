@@ -39,13 +39,17 @@ defmodule Hume.EventStore.ETS do
   end
 
   @impl true
-  def append_batch(stream, list) do
-    items = for payload <- list, do: {next_sequence(), payload}
+  def append(stream, payload, expect_seq) do
+    seq = next_sequence()
 
-    for {seq, payload} <- items do
-      true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
+    case expect_seq do
+      # FIXME: This is not atomic and can lead
+      ex when ex == nil or ex == seq - 1 ->
+        true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
+        {:ok, seq}
+
+      _ ->
+        {:error, :unexpected_sequence}
     end
-
-    {:ok, elem(List.last(items), 0)}
   end
 end

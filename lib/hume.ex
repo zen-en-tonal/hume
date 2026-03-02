@@ -82,6 +82,8 @@ defmodule Hume do
     - event_store: The module implementing the event store (must use `Hume.EventStore`).
     - stream: The stream identifier where the event will be published.
     - payload: The event payload to be published.
+    - opts: Optional keyword list of options. Supported options:
+      - `:expect_seq` - The expected sequence number for optimistic concurrency control.
 
   ## Returns
     - `{:ok, seq}` if the event is published successfully.
@@ -90,10 +92,11 @@ defmodule Hume do
   @spec publish(
           event_store :: module(),
           Hume.EventStore.stream(),
-          Hume.EventStore.payload() | [Hume.EventStore.payload()]
+          Hume.EventStore.payload(),
+          [{:expect_seq, non_neg_integer()}]
         ) :: {:ok, non_neg_integer() | nil} | {:error, term()}
-  def publish(event_store, stream, payloads) do
-    Hume.Publisher.publish(event_store, stream, payloads)
+  def publish(event_store, stream, payload, opts \\ []) do
+    Hume.Publisher.publish(event_store, stream, payload, opts)
   end
 
   @doc """
@@ -102,5 +105,14 @@ defmodule Hume do
   @spec state(GenServer.server(), [{:timeout, timeout()} | :dirty]) :: Hume.Projection.state()
   def state(server, opts \\ []) do
     Hume.Projection.state(server, opts)
+  end
+
+  @doc """
+  See `Hume.Projection.snapshot/2`.
+  """
+  @spec snapshot(GenServer.server(), [{:timeout, timeout()} | :dirty]) ::
+          Hume.Projection.snapshot()
+  def snapshot(server, opts \\ []) do
+    Hume.Projection.snapshot(server, opts)
   end
 end

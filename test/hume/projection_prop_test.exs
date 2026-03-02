@@ -61,7 +61,10 @@ defmodule Hume.Projection.PropTest do
         expected =
           Enum.reduce(payloads, %{}, fn e, m -> kvs_apply(m, e) end)
 
-        assert {:ok, _} = Hume.publish(SUT.store(), name, payloads)
+        for payload <- payloads do
+          assert {:ok, _} = Hume.publish(SUT.store(), name, payload)
+        end
+
         :timer.sleep(10)
 
         Hume.Projection.catch_up(pid)
@@ -88,8 +91,16 @@ defmodule Hume.Projection.PropTest do
             projection: unique_name()
           )
 
-        assert {:ok, _} = Hume.publish(SUT.store(), name, left)
-        assert {:ok, _} = Hume.publish(SUT.store(), name, right)
+        for payload <- left do
+          assert {:ok, _} = Hume.publish(SUT.store(), name, payload)
+        end
+
+        :timer.sleep(10)
+
+        for payload <- right do
+          assert {:ok, _} = Hume.publish(SUT.store(), name, payload)
+        end
+
         :timer.sleep(10)
 
         expected =
@@ -121,7 +132,9 @@ defmodule Hume.Projection.PropTest do
             projection: projection
           )
 
-        assert {:ok, _} = Hume.publish(SUT.store(), name, first)
+        for payload <- first do
+          assert {:ok, _} = Hume.publish(SUT.store(), name, payload)
+        end
 
         Process.exit(pid, :kill)
         :timer.sleep(100)
@@ -132,7 +145,10 @@ defmodule Hume.Projection.PropTest do
             projection: projection
           )
 
-        assert {:ok, _} = Hume.publish(SUT.store(), name, then)
+        for payload <- then do
+          assert {:ok, _} = Hume.publish(SUT.store(), name, payload)
+        end
+
         :timer.sleep(10)
 
         expected =
