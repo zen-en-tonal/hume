@@ -13,9 +13,18 @@ defmodule Hume.EventStore do
   @type event :: {seq(), payload()}
 
   @doc """
+  Append a single event to the given stream.
 
+  ## Parameters
+    * `stream` - The stream identifier where the event will be appended.
+    * `payload` - The event payload to be stored.
+    * `expect` - The expected last sequence number in the stream, or `nil` to skip the check.
+      If a sequence number is provided, the implementation must only append the event if
+      the current last sequence number in the stream equals `expect`. Otherwise it must
+      return an error.
 
-  The events must be strictly ordered by sequence number.
+  The implementation must assign the next strictly increasing sequence number and return
+  it in the `{:ok, seq()}` tuple on success.
   """
   @callback append(stream(), payload(), expect :: seq() | nil) :: {:ok, seq()} | {:error, term()}
 
