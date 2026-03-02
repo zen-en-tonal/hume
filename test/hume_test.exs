@@ -237,7 +237,7 @@ defmodule HumeTest do
       assert Hume.Projection.state(pid) == %{}
     end
 
-    test "publishes an nil" do
+    test "publishes nil" do
       assert {:ok, nil} = Hume.publish(Hume.EventStore.ETS, MyStream, nil)
     end
 
