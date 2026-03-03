@@ -261,7 +261,9 @@ defmodule HumeTest do
       assert {:error, _} =
                Hume.publish(Hume.EventStore.ETS, name, {:add, :bar, 43}, expect_seq: 0)
 
-      assert Hume.Projection.state(pid) == %{foo: 42, bar: 42}
+      assert Hume.Projection.catch_up_sync(pid)
+
+      assert %{foo: 42, bar: 42} == Hume.Projection.state(pid)
     end
   end
 
