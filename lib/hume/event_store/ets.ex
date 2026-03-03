@@ -22,19 +22,6 @@ defmodule Hume.EventStore.ETS do
     }
   end
 
-  defp next_sequence(stream) do
-    key = {stream, :seq}
-
-    :ets.update_counter(__MODULE__, key, {2, 1}, {key, 0})
-  end
-
-  defp current_sequence(stream) do
-    case :ets.lookup(__MODULE__, {stream, :seq}) do
-      [{{_, :seq}, seq}] -> seq
-      _ -> 0
-    end
-  end
-
   @impl true
   def events(stream, from) do
     # :ets.fun2ms(fn {{srm, seq}, event} when seq >= from and srm == stream -> event end)
@@ -52,7 +39,12 @@ defmodule Hume.EventStore.ETS do
 
   @impl true
   def append(stream, payload, nil) do
-    {:ok, insert_event(stream, payload)}
+    new_seq = :ets.update_counter(__MODULE__, {stream, :seq}, {2, 1}, {{stream, :seq}, 0})
+    key = {stream, new_seq}
+    value = {new_seq, payload}
+    true = :ets.insert(__MODULE__, {key, value})
+
+    {:ok, new_seq}
   end
 
   def append(stream, payload, expect_seq) when is_integer(expect_seq) do
@@ -68,13 +60,5 @@ defmodule Hume.EventStore.ETS do
     else
       {:error, :unexpected_sequence}
     end
-  end
-
-  defp insert_event(stream, payload) do
-    seq = next_sequence(stream)
-    key = {stream, seq}
-    value = {seq, payload}
-    true = :ets.insert(__MODULE__, {key, value})
-    seq
   end
 end
