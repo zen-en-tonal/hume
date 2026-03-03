@@ -4,11 +4,13 @@ defmodule Hume.Publisher do
   alias Hume.EventStore
   alias Hume.Bus
 
+  @type options :: {:expect_seq, non_neg_integer()}
+
   @spec publish(
           event_store :: module(),
           EventStore.stream(),
           EventStore.payload(),
-          keyword()
+          [options()]
         ) ::
           {:ok, non_neg_integer() | nil} | {:error, term()}
   def publish(_event_store, _stream, _payload, _opts \\ [])

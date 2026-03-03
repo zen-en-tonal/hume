@@ -49,6 +49,8 @@ defmodule Hume do
 
   """
 
+  @type snapshot_opts :: {:timeout, timeout()} | :dirty
+
   @doc """
   Starts a state machine process.
 
@@ -93,7 +95,7 @@ defmodule Hume do
           event_store :: module(),
           Hume.EventStore.stream(),
           Hume.EventStore.payload(),
-          [{:expect_seq, non_neg_integer()}]
+          [Hume.Publisher.options()]
         ) :: {:ok, non_neg_integer() | nil} | {:error, term()}
   def publish(event_store, stream, payload, opts \\ []) do
     Hume.Publisher.publish(event_store, stream, payload, opts)
@@ -102,7 +104,7 @@ defmodule Hume do
   @doc """
   See `Hume.Projection.state/2`.
   """
-  @spec state(GenServer.server(), [{:timeout, timeout()} | :dirty]) :: Hume.Projection.state()
+  @spec state(GenServer.server(), [snapshot_opts()]) :: Hume.Projection.state()
   def state(server, opts \\ []) do
     Hume.Projection.state(server, opts)
   end
@@ -110,7 +112,7 @@ defmodule Hume do
   @doc """
   See `Hume.Projection.snapshot/2`.
   """
-  @spec snapshot(GenServer.server(), [{:timeout, timeout()} | :dirty]) ::
+  @spec snapshot(GenServer.server(), [snapshot_opts()]) ::
           Hume.Projection.snapshot()
   def snapshot(server, opts \\ []) do
     Hume.Projection.snapshot(server, opts)
