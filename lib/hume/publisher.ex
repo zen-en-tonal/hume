@@ -2,6 +2,7 @@ defmodule Hume.Publisher do
   @moduledoc false
 
   alias Hume.EventStore
+  alias Hume.Bus
 
   @spec publish(
           event_store :: module(),
@@ -17,8 +18,10 @@ defmodule Hume.Publisher do
   end
 
   def publish(event_store, stream, payload, opts) do
-    case EventStore.append(event_store, stream, payload, opts[:expect_seq]) do
-      {:ok, seq} -> {:ok, seq}
+    with {:ok, seq} <- EventStore.append(event_store, stream, payload, opts[:expect_seq]),
+         :ok <- Bus.notify(event_store, stream, seq) do
+      {:ok, seq}
+    else
       {:error, reason} -> {:error, reason}
     end
   end
