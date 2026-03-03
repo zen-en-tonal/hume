@@ -9,7 +9,6 @@ defmodule Hume.EventStore.ETS do
 
   def start_link(_) do
     :ets.new(__MODULE__, [:named_table, :ordered_set, :public])
-    :ets.insert(__MODULE__, {:seq, 0})
     {:ok, self()}
   end
 
@@ -23,8 +22,17 @@ defmodule Hume.EventStore.ETS do
     }
   end
 
-  defp next_sequence do
-    :ets.update_counter(__MODULE__, :seq, {2, 1}, {:seq, 0})
+  defp next_sequence(stream) do
+    key = {stream, :seq}
+
+    :ets.update_counter(__MODULE__, key, {2, 1}, {key, 0})
+  end
+
+  defp current_sequence(stream) do
+    case :ets.lookup(__MODULE__, {stream, :seq}) do
+      [{{_, :seq}, seq}] -> seq
+      _ -> 0
+    end
   end
 
   @impl true
@@ -35,21 +43,31 @@ defmodule Hume.EventStore.ETS do
     ]
 
     :ets.select(__MODULE__, pattern)
+    |> Enum.filter(fn
+      {_, _} -> true
+      _ -> false
+    end)
     |> Enum.sort_by(fn {seq, _payload} -> seq end)
   end
 
   @impl true
-  def append(stream, payload, expect_seq) do
-    seq = next_sequence()
+  def append(stream, payload, nil) do
+    {:ok, insert_event(stream, payload)}
+  end
 
-    case expect_seq do
-      # FIXME: This is not atomic and can lead
-      ex when ex == nil or ex == seq - 1 ->
-        true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
-        {:ok, seq}
-
-      _ ->
-        {:error, :unexpected_sequence}
+  def append(stream, payload, expect_seq) when is_integer(expect_seq) do
+    if current_sequence(stream) == expect_seq do
+      {:ok, insert_event(stream, payload)}
+    else
+      {:error, :unexpected_sequence}
     end
+  end
+
+  defp insert_event(stream, payload) do
+    seq = next_sequence(stream)
+    key = {stream, seq}
+    value = {seq, payload}
+    true = :ets.insert(__MODULE__, {key, value})
+    seq
   end
 end
