@@ -13,11 +13,20 @@ defmodule Hume.EventStore do
   @type event :: {seq(), payload()}
 
   @doc """
-  Append a batch of events to the stream.
+  Append a single event to the given stream.
 
-  The events must be strictly ordered by sequence number.
+  ## Parameters
+    * `stream` - The stream identifier where the event will be appended.
+    * `payload` - The event payload to be stored.
+    * `expect` - The expected last sequence number in the stream, or `nil` to skip the check.
+      If a sequence number is provided, the implementation must only append the event if
+      the current last sequence number in the stream equals `expect`. Otherwise it must
+      return an error.
+
+  The implementation must assign the next strictly increasing sequence number and return
+  it in the `{:ok, seq()}` tuple on success.
   """
-  @callback append_batch(stream(), Enumerable.t(payload())) :: {:ok, seq()} | {:error, term()}
+  @callback append(stream(), payload(), expect :: seq() | nil) :: {:ok, seq()} | {:error, term()}
 
   @doc """
   Get all events from the stream starting from the given sequence number (exclusive).
@@ -27,14 +36,19 @@ defmodule Hume.EventStore do
   @callback events(stream(), from :: seq()) :: Enumerable.t(event())
 
   @doc """
-  Appends a single event or a batch of ordered events to the given stream.
+  Appends an event to the specified stream in the given event store.
 
-  Ensures the events are appended in order.
+  ## Parameters
+    - event_store: The module implementing the event store (must use `Hume.EventStore`).
+    - stream: The stream identifier where the event will be appended.
+    - payload: The event payload to be appended.
+    - expect_seq: Optional expected sequence number for optimistic concurrency control. 
+      If provided, the append will only succeed if the current last sequence number in the stream matches this value.
   """
-  @spec append(module(), stream(), payload() | Enumerable.t(payload())) ::
+  @spec append(module(), stream(), payload(), expect_seq :: seq() | nil) ::
           {:ok, seq()} | {:error, term()}
-  def append(mod, stream, payload) do
-    mod.append_batch(stream, List.wrap(payload))
+  def append(event_store, stream, payload, expect_seq \\ nil) do
+    event_store.append(stream, payload, expect_seq)
   end
 
   @doc """
@@ -55,8 +69,7 @@ defmodule Hume.EventStore do
     Code.ensure_loaded(mod)
 
     functions = [
-      {:next_sequence, 0},
-      {:append_batch, 2},
+      {:append, 3},
       {:events, 2}
     ]
 

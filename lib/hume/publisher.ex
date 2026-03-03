@@ -2,20 +2,29 @@ defmodule Hume.Publisher do
   @moduledoc false
 
   alias Hume.EventStore
-  alias Hume.Queue
+  alias Hume.Bus
+
+  @type options :: {:expect_seq, non_neg_integer()}
 
   @spec publish(
           event_store :: module(),
           EventStore.stream(),
-          [EventStore.payload()] | EventStore.payload()
+          EventStore.payload(),
+          [options()]
         ) ::
-          {:ok, non_neg_integer() | nil} | {:error, term()}
-  def publish(_event_store, _stream, []) do
-    {:ok, []}
+          {:ok, non_neg_integer()} | {:error, term()}
+  def publish(_event_store, _stream, _payload, _opts \\ [])
+
+  def publish(_event_store, _stream, nil, _opts) do
+    {:error, :payload_cannot_be_nil}
   end
 
-  def publish(event_store, stream, payloads) do
-    :ok = Queue.push({event_store, stream}, payloads)
-    Queue.flush({event_store, stream})
+  def publish(event_store, stream, payload, opts) do
+    with {:ok, seq} <- EventStore.append(event_store, stream, payload, opts[:expect_seq]),
+         :ok <- Bus.notify(event_store, stream, seq) do
+      {:ok, seq}
+    else
+      {:error, reason} -> {:error, reason}
+    end
   end
 end

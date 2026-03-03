@@ -9,7 +9,6 @@ defmodule Hume.EventStore.ETS do
 
   def start_link(_) do
     :ets.new(__MODULE__, [:named_table, :ordered_set, :public])
-    :ets.insert(__MODULE__, {:seq, 0})
     {:ok, self()}
   end
 
@@ -23,10 +22,6 @@ defmodule Hume.EventStore.ETS do
     }
   end
 
-  defp next_sequence do
-    :ets.update_counter(__MODULE__, :seq, {2, 1}, {:seq, 0})
-  end
-
   @impl true
   def events(stream, from) do
     # :ets.fun2ms(fn {{srm, seq}, event} when seq >= from and srm == stream -> event end)
@@ -35,17 +30,35 @@ defmodule Hume.EventStore.ETS do
     ]
 
     :ets.select(__MODULE__, pattern)
+    |> Enum.filter(fn
+      {_, _} -> true
+      _ -> false
+    end)
     |> Enum.sort_by(fn {seq, _payload} -> seq end)
   end
 
   @impl true
-  def append_batch(stream, list) do
-    items = for payload <- list, do: {next_sequence(), payload}
+  def append(stream, payload, nil) do
+    new_seq = :ets.update_counter(__MODULE__, {stream, :seq}, {2, 1}, {{stream, :seq}, 0})
+    key = {stream, new_seq}
+    value = {new_seq, payload}
+    true = :ets.insert(__MODULE__, {key, value})
 
-    for {seq, payload} <- items do
-      true = :ets.insert(__MODULE__, {{stream, seq}, {seq, payload}})
+    {:ok, new_seq}
+  end
+
+  def append(stream, payload, expect_seq) when is_integer(expect_seq) do
+    # Atomically increment the sequence counter and derive the previous value.
+    new_seq = :ets.update_counter(__MODULE__, {stream, :seq}, {2, 1}, {{stream, :seq}, 0})
+    prev_seq = new_seq - 1
+
+    if prev_seq == expect_seq do
+      key = {stream, new_seq}
+      value = {new_seq, payload}
+      true = :ets.insert(__MODULE__, {key, value})
+      {:ok, new_seq}
+    else
+      {:error, :unexpected_sequence}
     end
-
-    {:ok, elem(List.last(items), 0)}
   end
 end

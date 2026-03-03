@@ -49,6 +49,8 @@ defmodule Hume do
 
   """
 
+  @type snapshot_opts :: {:timeout, timeout()} | :dirty
+
   @doc """
   Starts a state machine process.
 
@@ -82,6 +84,8 @@ defmodule Hume do
     - event_store: The module implementing the event store (must use `Hume.EventStore`).
     - stream: The stream identifier where the event will be published.
     - payload: The event payload to be published.
+    - opts: Optional keyword list of options. Supported options:
+      - `:expect_seq` - The expected sequence number for optimistic concurrency control.
 
   ## Returns
     - `{:ok, seq}` if the event is published successfully.
@@ -90,17 +94,27 @@ defmodule Hume do
   @spec publish(
           event_store :: module(),
           Hume.EventStore.stream(),
-          Hume.EventStore.payload() | [Hume.EventStore.payload()]
-        ) :: {:ok, non_neg_integer() | nil} | {:error, term()}
-  def publish(event_store, stream, payloads) do
-    Hume.Publisher.publish(event_store, stream, payloads)
+          Hume.EventStore.payload(),
+          [Hume.Publisher.options()]
+        ) :: {:ok, non_neg_integer()} | {:error, term()}
+  def publish(event_store, stream, payload, opts \\ []) do
+    Hume.Publisher.publish(event_store, stream, payload, opts)
   end
 
   @doc """
   See `Hume.Projection.state/2`.
   """
-  @spec state(GenServer.server(), [{:timeout, timeout()} | :dirty]) :: Hume.Projection.state()
+  @spec state(GenServer.server(), [snapshot_opts()]) :: Hume.Projection.state()
   def state(server, opts \\ []) do
     Hume.Projection.state(server, opts)
+  end
+
+  @doc """
+  See `Hume.Projection.snapshot/2`.
+  """
+  @spec snapshot(GenServer.server(), [snapshot_opts()]) ::
+          Hume.Projection.snapshot()
+  def snapshot(server, opts \\ []) do
+    Hume.Projection.snapshot(server, opts)
   end
 end

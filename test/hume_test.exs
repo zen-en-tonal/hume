@@ -37,7 +37,7 @@ defmodule HumeTest do
     end
 
     @impl true
-    def append_batch(_stream, _list), do: :ok
+    def append(_stream, _list, _), do: {:ok, nil}
   end
 
   defmodule MyStreamProjection do
@@ -216,27 +216,8 @@ defmodule HumeTest do
         )
 
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:add, :foo, 42})
-      # Allow some time for the event to be processed
-      Process.sleep(100)
+      assert Hume.Projection.catch_up_sync(pid)
       assert Hume.Projection.state(pid) == %{foo: 42}
-    end
-
-    test "publishes multiple events and updates the state" do
-      name = unique_name()
-
-      {:ok, pid} =
-        Hume.start_link(MyProjection,
-          stream: name,
-          use_heir: false,
-          projection: name
-        )
-
-      assert {:ok, _} =
-               Hume.publish(Hume.EventStore.ETS, name, [{:add, :foo, 42}, {:add, :bar, 84}])
-
-      # Allow some time for the events to be processed
-      Process.sleep(100)
-      assert Hume.Projection.state(pid) == %{foo: 42, bar: 84}
     end
 
     test "publishes an event to remove a key and updates the state" do
@@ -250,14 +231,38 @@ defmodule HumeTest do
         )
 
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:add, :foo, 42})
-      Process.sleep(100)
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:remove, :foo})
-      Process.sleep(100)
+      assert Hume.Projection.catch_up_sync(pid)
       assert Hume.Projection.state(pid) == %{}
     end
 
-    test "publishes an empty list of events" do
-      assert {:ok, []} = Hume.publish(Hume.EventStore.ETS, MyStream, [])
+    test "publishes nil should be an error" do
+      assert {:error, _} = Hume.publish(Hume.EventStore.ETS, MyStream, nil)
+    end
+
+    test "deny if the expect_seq does not match" do
+      name = unique_name()
+
+      {:ok, pid} =
+        Hume.start_link(MyProjection,
+          stream: name,
+          use_heir: false,
+          projection: name
+        )
+
+      assert {:ok, last_seq} = Hume.publish(Hume.EventStore.ETS, name, {:add, :foo, 42})
+
+      assert {:ok, last_seq} =
+               Hume.publish(Hume.EventStore.ETS, name, {:add, :bar, 42}, expect_seq: last_seq)
+
+      assert 0 != last_seq
+
+      assert {:error, _} =
+               Hume.publish(Hume.EventStore.ETS, name, {:add, :bar, 43}, expect_seq: 0)
+
+      assert Hume.Projection.catch_up_sync(pid)
+
+      assert %{foo: 42, bar: 42} == Hume.Projection.state(pid)
     end
   end
 
