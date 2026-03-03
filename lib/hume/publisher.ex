@@ -12,11 +12,11 @@ defmodule Hume.Publisher do
           EventStore.payload(),
           [options()]
         ) ::
-          {:ok, non_neg_integer() | nil} | {:error, term()}
+          {:ok, non_neg_integer()} | {:error, term()}
   def publish(_event_store, _stream, _payload, _opts \\ [])
 
   def publish(_event_store, _stream, nil, _opts) do
-    {:ok, nil}
+    {:error, :payload_cannot_be_nil}
   end
 
   def publish(event_store, stream, payload, opts) do

@@ -96,7 +96,7 @@ defmodule Hume do
           Hume.EventStore.stream(),
           Hume.EventStore.payload(),
           [Hume.Publisher.options()]
-        ) :: {:ok, non_neg_integer() | nil} | {:error, term()}
+        ) :: {:ok, non_neg_integer()} | {:error, term()}
   def publish(event_store, stream, payload, opts \\ []) do
     Hume.Publisher.publish(event_store, stream, payload, opts)
   end
