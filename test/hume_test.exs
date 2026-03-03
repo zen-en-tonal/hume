@@ -216,8 +216,7 @@ defmodule HumeTest do
         )
 
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:add, :foo, 42})
-      # Allow some time for the event to be processed
-      Process.sleep(100)
+      assert Hume.Projection.catch_up_sync(pid)
       assert Hume.Projection.state(pid) == %{foo: 42}
     end
 
@@ -233,7 +232,7 @@ defmodule HumeTest do
 
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:add, :foo, 42})
       assert {:ok, _} = Hume.publish(Hume.EventStore.ETS, name, {:remove, :foo})
-      Process.sleep(100)
+      assert Hume.Projection.catch_up_sync(pid)
       assert Hume.Projection.state(pid) == %{}
     end
 
