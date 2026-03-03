@@ -56,8 +56,15 @@ defmodule Hume.EventStore.ETS do
   end
 
   def append(stream, payload, expect_seq) when is_integer(expect_seq) do
-    if current_sequence(stream) == expect_seq do
-      {:ok, insert_event(stream, payload)}
+    # Atomically increment the sequence counter and derive the previous value.
+    new_seq = :ets.update_counter(__MODULE__, {stream, :seq}, {2, 1}, {{stream, :seq}, 0})
+    prev_seq = new_seq - 1
+
+    if prev_seq == expect_seq do
+      key = {stream, new_seq}
+      value = {new_seq, payload}
+      true = :ets.insert(__MODULE__, {key, value})
+      {:ok, new_seq}
     else
       {:error, :unexpected_sequence}
     end
